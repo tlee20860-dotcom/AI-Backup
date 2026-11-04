@@ -1,0 +1,20 @@
+{
+  "ignore_patterns": [
+    "external/old-AI-WA-FAMILY/*",
+    "external/AI-OS/*"
+  ],
+  "file_specific_rules": {},
+  "console_rules": {
+    "base_system_repos": ["AI-kernel", "AI-General", "AI-infra"],
+    "record_exempt_paths": ["docs/records/", "/WF-", "/p"],
+    "record_exempt_repo": "AI-General",
+    "record_auto_exempt": false,
+    "show_file_path_in_error": true,
+    "error_header_format": "📄 檔案：{path}\n------------------------\n"
+  },
+  "_EOF": {
+    "F": "AI-kernel/docs/r-rules/validate-config.json",
+    "V": 1792913900,
+    "W": "ai-system-005"
+  }
+}
