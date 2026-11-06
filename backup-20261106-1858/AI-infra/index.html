@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI 控制台 - 管理中心</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#6366f1">
+    <style>
+        :root {
+            --primary: #6366f1; --primary-hover: #4f46e5; --bg: #f8fafc;
+            --card-bg: #ffffff; --text: #1e293b; --text-muted: #64748b;
+            --success: #10b981; --danger: #ef4444; --border: #e2e8f0;
+            --warning: #f59e0b; --diff-add: #dcfce7; --diff-del: #fee2e2;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        body { background-color: var(--bg); color: var(--text); padding: 15px; line-height: 1.5; -webkit-tap-highlight-color: transparent; padding-bottom: 80px; }
+        .container { max-width: 600px; margin: 0 auto; }
+        
+        .card { background: var(--card-bg); border-radius: 12px; padding: 15px; margin-bottom: 15px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid var(--border); }
+        .card-title { font-size: 1.1rem; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; color: var(--text); }
+        .subtitle { color: var(--text-muted); font-size: 0.8rem; margin-bottom: 12px; }
+        
+        .sticky-header { position: relative; background: var(--bg); z-index: 100; padding-top: 15px; margin-top: -15px; margin-bottom: 15px; }
+        
+        input[type="text"], input[type="password"], textarea, select { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 0.95rem; margin-bottom: 10px; font-family: inherit; }
+        textarea { resize: vertical; min-height: 150px; max-height: 400px; font-family: monospace; overflow-y: auto; }
+        
+        button { width: 100%; padding: 12px; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; transition: background-color 0.2s, opacity 0.2s; display: flex; justify-content: center; align-items: center; gap: 8px; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .btn-primary { background-color: var(--primary); color: white; }
+        .btn-success { background-color: var(--success); color: white; }
+        .btn-danger { background-color: var(--danger); color: white; }
+        .btn-warning { background-color: var(--warning); color: white; }
+        .btn-small { width: auto; padding: 6px 10px; font-size: 0.8rem; border-radius: 6px; }
+        
+        .status-box { padding: 10px; border-radius: 8px; background-color: #f1f5f9; font-size: 0.85rem; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 10px; width: 100%; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; background-color: var(--text-muted); flex-shrink: 0; }
+        .status-dot.running { background-color: var(--warning); animation: pulse 1.5s infinite; }
+        .status-dot.success { background-color: var(--success); }
+        .status-dot.failure { background-color: var(--danger); }
+        @keyframes pulse { 0% { transform: scale(0.95); opacity: 0.7; } 50% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(0.95); opacity: 0.7; } }
+
+        .error-panel, .success-panel { display: none; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
+        .error-panel { background-color: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+        .success-panel { background-color: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+        .error-list { font-size: 0.85rem; margin-bottom: 10px; white-space: pre-wrap; font-family: monospace; }
+        
+        .dep-alert { display: none; background-color: #fffbeb; border: 1px solid #fde68a; color: #92400e; padding: 12px; border-radius: 8px; margin-bottom: 15px; font-size: 0.85rem; }
+        .dep-alert-title { font-weight: bold; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+        .dep-alert-btn { margin-top: 10px; background-color: #f59e0b; color: white; width: auto; padding: 6px 12px; font-size: 0.85rem; border-radius: 6px; border: none; cursor: pointer; display: inline-flex; }
+
+        .compare-container { display: flex; flex-direction: row; gap: 10px; margin-bottom: 15px; }
+        .compare-card { flex: 1; min-width: 0; background: #fff; border: 1px solid var(--border); border-radius: 6px; display: flex; flex-direction: column; }
+        .compare-card-title { font-size: 0.8rem; font-weight: bold; color: var(--text); background: #f1f5f9; padding: 8px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
+        .char-count { font-size: 0.75rem; font-weight: normal; color: var(--text-muted); background: #e2e8f0; padding: 2px 6px; border-radius: 4px; display: inline-block; }
+        .compare-card pre { font-size: 0.75rem; line-height: 1.4; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; font-family: monospace; color: var(--text); padding: 8px; flex: 1; margin: 0; }
+        
+        .highlight-error { color: #dc2626; background-color: #fee2e2; font-weight: bold; border-radius: 2px; padding: 0 2px; }
+        .diff-line { display: block; }
+        .diff-add-line { background-color: var(--diff-add); color: #166534; }
+        .diff-del-line { background-color: var(--diff-del); color: #991b1b; }
+        
+        details { margin-bottom: 15px; }
+        summary { cursor: pointer; font-weight: bold; padding: 12px 15px; background: #f8fafc; border-radius: 8px; border: 1px solid var(--border); outline: none; display: flex; align-items: center; gap: 8px; }
+
+        .tabs { display: flex; margin-bottom: 15px; border-bottom: 2px solid var(--border); }
+        .tab-btn { flex: 1; padding: 10px; background: none; border: none; border-bottom: 3px solid transparent; font-weight: bold; color: var(--text-muted); cursor: pointer; font-size: 0.95rem; border-radius: 0; }
+        .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        .rename-input-box { background: #fffbeb; border: 1px solid #fde68a; padding: 10px; border-radius: 8px; margin-bottom: 10px; }
+        .rename-input-box label { font-size: 0.85rem; font-weight: bold; color: #92400e; display: block; margin-bottom: 6px; }
+        .rename-input-box input { margin-bottom: 0; border-color: #fcd34d; background: #fff; }
+    </style>
+    
+    <script>
+        const OWNER = 'tlee20860-dotcom';
+        const INFRA_REPO = 'AI-infra';
+        const WORKFLOW_ID = 'setup-structure.yml';
+        const BACKUP_WORKFLOW_ID = 'copy-backup.yml';
+        const CONFIG_URL = `https://raw.githubusercontent.com/${OWNER}/AI-kernel/main/docs/r-rules/validate-config.json`;
+        const FORBIDDEN_URL = `https://raw.githubusercontent.com/${OWNER}/AI-kernel/main/docs/r-rules/forbidden_words.txt`;
+        const REPOS_URL = `https://raw.githubusercontent.com/${OWNER}/AI-infra/main/config/repos.json`;
+
+        const DEPENDENCY_MAP = {
+            "AI-kernel/docs/r-rules/R-00-rules.md": [
+                "AI-kernel/docs/r-rules/R-05-dsl-map.md",
+                "AI-infra/.github/scripts/validate_delivery.py"
+            ],
+            "AI-kernel/docs/a-guide/A-00-guide.md": [
+                "AI-kernel/docs/r-rules/R-03-terms.md"
+            ]
+        };
+
+        let currentToken = '';
+        let tokenList = [];
+        let triggerTime = 0;
+        let pollInterval = null;
+        let deployPollInterval = null;
+        let backupPollInterval = null;
+        let hasUnpackedChanges = false;
+
+        let globalForbiddenWords = [];
+        let globalConfig = { console_rules: {}, file_specific_rules: {} };
+        let allowedRepos = [];
+        let projectList = [];
+
+        let oldContentCache = {};
+        let previewCache = { finalContent: '', deleteOldPath: '' };
+        let currentInputMode = 'full';
+
+        window.onload = async () => {
+            loadTokens(); 
+            await loadDictionaries();
+            if (currentToken) {
+                checkBuildStatus();
+                checkLatestDeployStatus();
+                checkLatestBackupStatus();
+            } else {
+                updateStatus('build-status', '', '等待操作');
+                updateStatus('deploy-status', '', '等待操作');
+                updateStatus('backup-status', '', '等待操作');
+            }
+
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('sw.js').catch(err => console.log('SW fail:', err));
+            }
+        };
+
+        function switchTab(mode) {
+            currentInputMode = mode;
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.querySelector(`.tab-btn[data-tab="${mode}"]`).classList.add('active');
+            document.getElementById(`input-${mode}`).classList.add('active');
+        }
+
+        async function loadDictionaries() {
+            try {
+                const txtRes = await fetch(`${FORBIDDEN_URL}?t=${Date.now()}`);
+                if (txtRes.ok) {
+                    const text = await txtRes.text();
+                    globalForbiddenWords = text.split('\n').map(w => w.trim()).filter(w => w && !w.startsWith('#'));
+                }
+                
+                const jsonRes = await fetch(`${CONFIG_URL}?t=${Date.now()}`);
+                if (jsonRes.ok) {
+                    globalConfig = await jsonRes.json();
+                    if (globalConfig.console_rules && globalConfig.console_rules.base_system_repos) {
+                        allowedRepos = [...globalConfig.console_rules.base_system_repos];
+                    }
+                }
+
+                const reposRes = await fetch(`${REPOS_URL}?t=${Date.now()}`);
+                if (reposRes.ok) {
+                    const reposData = await reposRes.json();
+                    if (reposData.projects) {
+                        projectList = reposData.projects;
+                        const deploySelect = document.getElementById('deploy-repo-select');
+                        deploySelect.innerHTML = '';
+                        projectList.forEach(p => {
+                            const repoName = p.repo.split('/')[1];
+                            if (repoName && !allowedRepos.includes(repoName)) {
+                                allowedRepos.push(repoName);
+                            }
+                            const opt = document.createElement('option');
+                            opt.value = repoName;
+                            opt.textContent = `${p.display} (${repoName})`;
+                            deploySelect.appendChild(opt);
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn("⚠️ 無法載入遠端配置，將使用預設值。", e);
+            }
+        }
+
+        function loadTokens() {
+            const stored = localStorage.getItem('gh_token_list');
+            if (stored) {
+                try {
+                    tokenList = JSON.parse(stored);
+                    if (tokenList.length > 0) {
+                        const active = tokenList.find(t => t.isActive);
+                        currentToken = active ? active.token.trim() : tokenList[0].token.trim();
+                    }
+                } catch (e) { console.error(e); }
+            }
+            renderTokens();
+        }
+        function saveTokensToLocal() { localStorage.setItem('gh_token_list', JSON.stringify(tokenList)); }
+        function addToken() {
+            const name = document.getElementById('new-token-name').value.trim();
+            const tokenStr = document.getElementById('new-token-value').value.trim();
+            if (!name || !tokenStr) return alert('請填寫名稱與 Token');
+            const newToken = { id: Date.now().toString(), name, token: tokenStr, isActive: tokenList.length === 0 };
+            tokenList.push(newToken); saveTokensToLocal();
+            if (newToken.isActive) currentToken = newToken.token;
+            document.getElementById('new-token-name').value = ''; document.getElementById('new-token-value').value = '';
+            renderTokens(); checkBuildStatus();
+        }
+        function setActive(id) {
+            tokenList.forEach(t => { t.isActive = (t.id === id); if (t.isActive) currentToken = t.token.trim(); });
+            saveTokensToLocal(); renderTokens(); checkBuildStatus(); checkLatestDeployStatus(); checkLatestBackupStatus();
+        }
+        function deleteToken(id) {
+            if (!confirm('確定刪除？')) return;
+            tokenList = tokenList.filter(t => t.id !== id);
+            if (tokenList.length > 0) { setActive(tokenList[0].id); } else { currentToken = ''; saveTokensToLocal(); renderTokens(); updateStatus('build-status', '', '等待操作'); }
+        }
+        function copyToken(tokenStr) { navigator.clipboard.writeText(tokenStr).then(() => alert('已複製 Token')); }
+        function renderTokens() {
+            const listEl = document.getElementById('token-list');
+            listEl.innerHTML = tokenList.length === 0 ? '<div style="text-align:center;color:#999;font-size:0.8rem; padding:10px;">無 Token</div>' : '';
+            tokenList.forEach(t => {
+                const item = document.createElement('div');
+                item.style = "display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #eee;";
+                const masked = t.token.substring(0, 4) + '****' + t.token.substring(t.token.length - 4);
+                item.innerHTML = `
+                    <div><span style="font-weight:bold; font-size:0.9rem;">${t.name} ${t.isActive ? '✅' : ''}</span><br><span style="font-size:0.75rem;color:#666;">${masked}</span></div>
+                    <div style="display:flex; gap:5px;">
+                        ${!t.isActive ? `<button class="btn-primary btn-small" onclick="setActive('${t.id}')">啟用</button>` : ''}
+                        <button class="btn-primary btn-small" style="background:#64748b;" onclick="copyToken('${t.token}')">複製</button>
+                        <button class="btn-danger btn-small" onclick="deleteToken('${t.id}')">刪除</button>
+                    </div>`;
+                listEl.appendChild(item);
+            });
+        }
+
+        async function githubAPI(url, options = {}) {
+            if (!currentToken) throw new Error("未啟用 GitHub Token");
+            const headers = { 'Accept': 'application/vnd.github.v3+json', 'Authorization': `token ${currentToken.trim()}`, ...options.headers };
+            
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+            let res;
+            try {
+                res = await fetch(`https://api.github.com${url}?t=${Date.now()}`, { ...options, headers, signal: controller.signal });
+            } catch (fetchError) {
+                if (fetchError.name === 'AbortError') {
+                    throw new Error("連線超時（15秒），請檢查手機網路或稍後重試。");
+                }
+                throw new Error("無法連線至 GitHub（請確認 Token 無多餘空白，或關閉廣告攔截器）");
+            } finally {
+                clearTimeout(timeoutId);
+            }
+
+            if (!res.ok) {
+                let errMsg = `API 錯誤: ${res.status}`;
+                try { const errData = await res.json(); if (errData.message) errMsg += ` - ${errData.message}`; } catch(e) {}
+                if (res.status === 401) throw new Error('Token 無效或過期');
+                if (res.status === 403) throw new Error('Token 權限不足');
+                if (res.status === 404) throw new Error('找不到資源');
+                throw new Error(errMsg);
+            }
+            return res.status === 204 ? null : await res.json();
+        }
+
+        async function triggerBuild() {
+            if (!currentToken) return alert('請先設定 Token');
+            const btn = document.getElementById('btn-trigger');
+            btn.disabled = true; triggerTime = Date.now();
+            updateStatus('build-status', 'running', '發送指令...');
+            
+            hasUnpackedChanges = false;
+
+            try {
+                await githubAPI(`/repos/${OWNER}/${INFRA_REPO}/actions/workflows/${WORKFLOW_ID}/dispatches`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: 'main' })
+                });
+                updateStatus('build-status', 'running', '等待排隊...');
+                if (pollInterval) clearInterval(pollInterval);
+                setTimeout(checkBuildStatus, 3000);
+                pollInterval = setInterval(checkBuildStatus, 8000);
+            } catch (error) { updateStatus('build-status', 'failure', error.message); btn.disabled = false; }
+        }
+
+        async function checkBuildStatus() {
+            if (!currentToken) return;
+            try {
+                const data = await githubAPI(`/repos/${OWNER}/${INFRA_REPO}/actions/workflows/${WORKFLOW_ID}/runs?per_page=1`);
+                if (data.workflow_runs && data.workflow_runs.length > 0) {
+                    const run = data.workflow_runs[0];
+                    const runTime = new Date(run.created_at).getTime();
+                    const createdAt = new Date(run.created_at).toLocaleString('zh-TW', { timeZone: 'Asia/Hong_Kong' });
+                    if (triggerTime > 0 && runTime < triggerTime - 10000) {
+                        updateStatus('build-status', 'running', '排隊中...'); return;
+                    }
+                    if (run.status === 'in_progress' || run.status === 'queued') {
+                        updateStatus('build-status', 'running', `打包中...`);
+                    } else if (run.conclusion === 'success') {
+                        updateStatus('build-status', 'success', `上次成功 (${createdAt})`);
+                        document.getElementById('btn-trigger').disabled = false; triggerTime = 0;
+                        if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+                    } else {
+                        updateStatus('build-status', 'failure', `上次失敗 (${createdAt})`);
+                        document.getElementById('btn-trigger').disabled = false; triggerTime = 0;
+                        if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+                    }
+                } else { updateStatus('build-status', '', '尚無紀錄'); document.getElementById('btn-trigger').disabled = false; }
+            } catch (error) { updateStatus('build-status', 'failure', error.message); document.getElementById('btn-trigger').disabled = false; }
+        }
+
+        function updateStatus(prefix, status, msg) {
+            const dot = document.getElementById(`${prefix}-dot`); const text = document.getElementById(`${prefix}-text`);
+            if(dot) dot.className = `status-dot ${status}`; if(text) text.textContent = msg;
+        }
+
+        async function checkLatestDeployStatus() {
+            if (!currentToken) return;
+            const repoName = document.getElementById('deploy-repo-select').value;
+            const workflow = document.getElementById('deploy-workflow').value.trim() || 'deploy.yml';
+            if (!repoName) return;
+
+            try {
+                const data = await githubAPI(`/repos/${OWNER}/${repoName}/actions/workflows/${workflow}/runs?per_page=1`);
+                if (data.workflow_runs && data.workflow_runs.length > 0) {
+                    const run = data.workflow_runs[0];
+                    const createdAt = new Date(run.created_at).toLocaleString('zh-TW', { timeZone: 'Asia/Hong_Kong' });
+                    
+                    if (run.status === 'in_progress' || run.status === 'queued') {
+                        updateStatus('deploy-status', 'running', `部署中...`);
+                        if (deployPollInterval) clearInterval(deployPollInterval);
+                        deployPollInterval = setInterval(() => checkDeployStatus(repoName, workflow), 8000);
+                    } else if (run.conclusion === 'success') {
+                        updateStatus('deploy-status', 'success', `上次成功 (${createdAt})`);
+                    } else {
+                        updateStatus('deploy-status', 'failure', `上次失敗 (${createdAt})`);
+                    }
+                } else {
+                    updateStatus('deploy-status', '', '尚無部署紀錄');
+                }
+            } catch (error) {
+                if (error.message.includes('404') || error.message.includes('找不到資源')) {
+                    updateStatus('deploy-status', '', '尚無部署紀錄');
+                } else {
+                    updateStatus('deploy-status', 'failure', '狀態查詢失敗');
+                }
+            }
+        }
+
+        async function triggerProjectDeploy() {
+            if (!currentToken) return alert('請先設定 Token');
+            const repoName = document.getElementById('deploy-repo-select').value;
+            const workflow = document.getElementById('deploy-workflow').value.trim() || 'deploy.yml';
+            const branch = document.getElementById('deploy-branch').value.trim() || 'main';
+            
+            if (!repoName) return alert('請選擇專案');
+            
+            const btn = document.getElementById('btn-deploy');
+            btn.disabled = true;
+            updateStatus('deploy-status', 'running', '發送部署指令...');
+            
+            try {
+                await githubAPI(`/repos/${OWNER}/${repoName}/actions/workflows/${workflow}/dispatches`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: branch })
+                });
+                updateStatus('deploy-status', 'running', '等待排隊...');
+                if (deployPollInterval) clearInterval(deployPollInterval);
+                setTimeout(() => checkDeployStatus(repoName, workflow), 3000);
+                deployPollInterval = setInterval(() => checkDeployStatus(repoName, workflow), 8000);
+            } catch (error) {
+                updateStatus('deploy-status', 'failure', error.message);
+                btn.disabled = false;
+            }
+        }
+
+        async function checkDeployStatus(repo, workflow) {
+            if (!currentToken) return;
+            try {
+                const data = await githubAPI(`/repos/${OWNER}/${repo}/actions/workflows/${workflow}/runs?per_page=1`);
+                if (data.workflow_runs && data.workflow_runs.length > 0) {
+                    const run = data.workflow_runs[0];
+                    const createdAt = new Date(run.created_at).toLocaleString('zh-TW', { timeZone: 'Asia/Hong_Kong' });
+                    
+                    if (run.status === 'in_progress' || run.status === 'queued') {
+                        updateStatus('deploy-status', 'running', `部署中...`);
+                    } else if (run.conclusion === 'success') {
+                        updateStatus('deploy-status', 'success', `上次成功 (${createdAt})`);
+                        document.getElementById('btn-deploy').disabled = false;
+                        if (deployPollInterval) { clearInterval(deployPollInterval); deployPollInterval = null; }
+                    } else {
+                        updateStatus('deploy-status', 'failure', `上次失敗 (${createdAt})`);
+                        document.getElementById('btn-deploy').disabled = false;
+                        if (deployPollInterval) { clearInterval(deployPollInterval); deployPollInterval = null; }
+                    }
+                }
+            } catch (error) {
+                updateStatus('deploy-status', 'failure', error.message);
+                document.getElementById('btn-deploy').disabled = false;
+            }
+        }
+
+        async function triggerBackup() {
+            if (!currentToken) return alert('請先設定 Token');
+            if (!confirm('這將備份所有帶有 ai-systems 標籤的倉庫到 AI-Backup，確定嗎？')) return;
+            
+            const btn = document.getElementById('btn-backup');
+            btn.disabled = true;
+            updateStatus('backup-status', 'running', '發送備份指令...');
+            
+            try {
+                await githubAPI(`/repos/${OWNER}/${INFRA_REPO}/actions/workflows/${BACKUP_WORKFLOW_ID}/dispatches`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+                        ref: 'main',
+                        inputs: {
+                            repos: 'ALL',
+                            target_repo: `${OWNER}/AI-Backup`
+                        }
+                    })
+                });
+                updateStatus('backup-status', 'running', '等待排隊...');
+                if (backupPollInterval) clearInterval(backupPollInterval);
+                setTimeout(checkLatestBackupStatus, 3000);
+                backupPollInterval = setInterval(checkLatestBackupStatus, 8000);
+            } catch (error) {
+                updateStatus('backup-status', 'failure', error.message);
+                btn.disabled = false;
+            }
+        }
+
+        async function checkLatestBackupStatus() {
+            if (!currentToken) return;
+            try {
+                const data = await githubAPI(`/repos/${OWNER}/${INFRA_REPO}/actions/workflows/${BACKUP_WORKFLOW_ID}/runs?per_page=1`);
+                if (data.workflow_runs && data.workflow_runs.length > 0) {
+                    const run = data.workflow_runs[0];
+                    const createdAt = new Date(run.created_at).toLocaleString('zh-TW', { timeZone: 'Asia/Hong_Kong' });
+                    
+                    if (run.status === 'in_progress' || run.status === 'queued') {
+                        updateStatus('backup-status', 'running', '備份中...');
+                    } else if (run.conclusion === 'success') {
+                        updateStatus('backup-status', 'success', `上次成功 (${createdAt})`);
+                        document.getElementById('btn-backup').disabled = false;
+                        if (backupPollInterval) { clearInterval(backupPollInterval); backupPollInterval = null; }
+                    } else {
+                        updateStatus('backup-status', 'failure', `上次失敗 (${createdAt})`);
+                        document.getElementById('btn-backup').disabled = false;
+                        if (backupPollInterval) { clearInterval(backupPollInterval); backupPollInterval = null; }
+                    }
+                } else {
+                    updateStatus('backup-status', '', '尚無備份紀錄');
+                }
+            } catch (error) {
+                updateStatus('backup-status', 'failure', '狀態查詢失敗');
+            }
+        }
+
+        async function fetchOldContent(repo, filePath) {
+            const cacheKey = `${repo}/${filePath}`;
+            if (oldContentCache.hasOwnProperty(cacheKey)) {
+                return oldContentCache[cacheKey];
+            }
+            try {
+                const existing = await githubAPI(`/repos/${OWNER}/${repo}/contents/${filePath}`);
+                if (existing && existing.sha && existing.content) {
+                    const content = decodeURIComponent(escape(atob(existing.content.replace(/\n/g, ''))));
+                    oldContentCache[cacheKey] = content;
+                    return content;
+                }
+            } catch (e) {}
+            oldContentCache[cacheKey] = null;
+            return null;
+        }
+
+        function hasValidEof(content, filePath) {
+            if (filePath && filePath.endsWith('.json')) {
+                try {
+                    const data = JSON.parse(content);
+                    return data._EOF && data._EOF.F && data._EOF.V !== undefined && data._EOF.W;
+                } catch (e) {
+                    return false;
+                }
+            }
+            const eofRegex = /(?:#\s*|\/\/\s*|\/\*\s*|<!--\s*)*F:\s*([^\s\n]+)\s*\n(?:#\s*|\/\/\s*|\/\*\s*|<!--\s*)*V:\s*\d+\s*\n(?:#\s*|\/\/\s*|\/\*\s*|<!--\s*)*W:\s*[^\s\n]+/;
+            return eofRegex.test(content);
+        }
+
+        function escapeHTML(str) {
+            return str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
+        }
+
+        function highlightText(text, targets) {
+            if (text === null || text === undefined) return '';
+            let safeText = escapeHTML(text);
+            if (!targets || targets.length === 0) return safeText;
+            const uniqueTargets = [...new Set(targets)].filter(Boolean).sort((a, b) => b.length - a.length);
+            uniqueTargets.forEach(target => {
+                const escapedTarget = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(escapedTarget, 'g');
+                const replacement = `<span class="highlight-error">${escapeHTML(target)}</span>`;
+                safeText = safeText.replace(regex, replacement);
+            });
+            return safeText;
+        }
+
+        function renderDiff(oldText, newText) {
+            const oldLines = oldText.split('\n');
+            const newLines = newText.split('\n');
+            let html = '';
+            
+            let i = 0, j = 0;
+            while (i < oldLines.length || j < newLines.length) {
+                if (i < oldLines.length && j < newLines.length && oldLines[i] === newLines[j]) {
+                    html += `<span class="diff-line">${escapeHTML(oldLines[i])}</span>`;
+                    i++; j++;
+                } else if (j < newLines.length && (i >= oldLines.length || !oldLines.includes(newLines[j]))) {
+                    html += `<span class="diff-line diff-add-line">+ ${escapeHTML(newLines[j])}</span>`;
+                    j++;
+                } else {
+                    html += `<span class="diff-line diff-del-line">- ${escapeHTML(oldLines[i])}</span>`;
+                    i++;
+                }
+            }
+            return html;
+        }
+
+        function markError(msg, target, oldContent) {
+            let mark = '';
+            if (oldContent === null) mark = '〔新檔案〕';
+            else if (target && oldContent.includes(target)) mark = '〔既有〕';
+            else mark = '〔新增〕';
+            return `${msg}${mark}`;
+        }
+
+        async function processFile() {
+            const inputId = currentInputMode === 'full' ? 'file-input-full' : 'file-input-rename';
+            const content = document.getElementById(inputId).value;
+            const deleteOldPathInput = currentInputMode === 'rename' ? document.getElementById('delete-old-path').value.trim() : '';
+            
+            const errorPanel = document.getElementById('error-panel');
+            const successPanel = document.getElementById('success-panel');
+            const inputArea = document.getElementById('input-area');
+            const forceBtn = document.getElementById('btn-force-publish');
+            const depAlert = document.getElementById('dep-alert');
+            const structErrorWarning = document.getElementById('struct-error-warning');
+            
+            errorPanel.style.display = 'none';
+            successPanel.style.display = 'none';
+            forceBtn.style.display = 'none';
+            depAlert.style.display = 'none';
+            structErrorWarning.style.display = 'none';
+
+            if (!content.trim()) return alert('請先貼上內容');
+            if (currentInputMode === 'rename' && !deleteOldPathInput) return alert('重命名模式必須填寫「準備刪除的舊路徑」');
+
+            let errors = [];
+            let errorTargets = [];
+            let repo = "", filePath = "", fullPath = "未知路徑";
+            let isStructuralError = false;
+            const rules = globalConfig.console_rules || {};
+
+            let eofMatch = content.match(/(?:#\s*|\/\/\s*|\/\*\s*|<!--\s*)*F:\s*([^\s\n]+)\s*\n(?:#\s*|\/\/\s*|\/\*\s*|<!--\s*)*V:\s*\d+\s*\n(?:#\s*|\/\/\s*|\/\*\s*|<!--\s*)*W:\s*[^\s\n]+/);
+            let pathMatch = null;
+            
+            if (eofMatch) pathMatch = eofMatch;
+            else pathMatch = content.match(/^(?:#\s*|\/\/\s*|\/\*\s*|<!--\s*)*F:\s*"?([^\s"\n]+)"?\s*(?:\*\/|-->)?$/m);
+
+            if (!pathMatch && content.trim().startsWith('{')) {
+                try {
+                    const data = JSON.parse(content);
+                    if (data._EOF && data._EOF.F) {
+                        pathMatch = [null, data._EOF.F];
+                    }
+                } catch(e) {}
+            }
+
+            if (!pathMatch) {
+                errors.push("找不到 F: 路徑標記。請確認 AI 是否漏寫 EOF。");
+                errorTargets.push(null);
+                isStructuralError = true;
+            } else {
+                fullPath = pathMatch[1];
+                const pathParts = fullPath.split('/');
+                if (pathParts.length < 2) {
+                    errors.push(`路徑格式錯誤：${fullPath}。必須包含倉庫名。`);
+                    errorTargets.push(null);
+                    isStructuralError = true;
+                } else {
+                    repo = pathParts[0];
+                    filePath = pathParts.slice(1).join('/');
+                    
+                    if (!allowedRepos.includes(repo)) {
+                        if (repo === 'src' || repo === 'public' || repo === 'functions') {
+                            errors.push(`路徑缺少倉庫前綴：${fullPath}。`);
+                        } else {
+                            errors.push(`未知的倉庫目標：${repo}。`);
+                        }
+                        errorTargets.push(null);
+                        isStructuralError = true;
+                        document.getElementById('target-repo').value = '';
+                        document.getElementById('target-file-path').value = '';
+                        document.getElementById('target-path-display').textContent = `目標：無效（${repo}）`;
+                    } else {
+                        document.getElementById('target-path-display').textContent = `目標：${repo} / ${filePath}`;
+                        document.getElementById('target-repo').value = repo;
+                        document.getElementById('target-file-path').value = filePath;
+                    }
+                }
+            }
+
+            if (filePath.endsWith('.html') && repo !== 'AI-infra') {
+                const doctypeCount = (content.match(/<!DOCTYPE html>/gi) || []).length;
+                const htmlTagCount = (content.match(/<html/gi) || []).length;
+                if (doctypeCount > 1 || htmlTagCount > 1) {
+                    errors.push(`檔案結構異常：多個 <!DOCTYPE html> 或 <html> 標籤。`);
+                    errorTargets.push(null);
+                    isStructuralError = true;
+                }
+            }
+
+            if (fullPath.startsWith('AI-kernel/docs/r-rules/') || fullPath.startsWith('AI-kernel/docs/a-guide/')) {
+                if (fullPath.endsWith('.md') && !content.includes('<!-- === 關聯規則防呆矩陣 === -->') && !content.includes('<!-- === 關聯規則防呆矩陣 ===')) {
+                    errors.push("缺少關聯規則防呆矩陣（請依 R-005 規範補齊）。");
+                    errorTargets.push('<!-- === 關聯規則防呆矩陣 === -->');
+                }
+            }
+
+            let specificRule = (globalConfig.file_specific_rules && globalConfig.file_specific_rules[`${repo}/${filePath}`]) || {};
+            
+            let cleanContent = content.replace(/```[\s\S]*?```/g, '').replace(/~~~[\s\S]*?~~~/g, '');
+            cleanContent = cleanContent.replace(/「[^」]*」/g, '').replace(/`[^`]*`/g, '');
+
+            let oldContent = null;
+            let oldContentStatus = '';
+            if (repo && filePath && allowedRepos.includes(repo)) {
+                oldContent = await fetchOldContent(repo, filePath);
+                if (oldContent === null) oldContentStatus = '（新檔案，倉庫無舊版）';
+            } else {
+                oldContentStatus = '（無法取得舊檔）';
+            }
+
+            globalForbiddenWords.forEach(word => {
+                if (cleanContent.includes(word)) {
+                    errors.push(`發現禁用詞彙或偷懶樣式：「${word}」`);
+                    errorTargets.push(word);
+                }
+            });
+
+            const simplified = globalConfig.simplified_chars || [];
+            if (specificRule.check_simplified !== false && simplified.length > 0) {
+                simplified.forEach(word => {
+                    if (cleanContent.includes(word)) {
+                        errors.push(`發現簡體字：「${word}」`);
+                        errorTargets.push(word);
+                    }
+                });
+            }
+
+            if (!hasValidEof(content, filePath)) {
+                errors.push(`內容缺少 EOF (F/V/W)。已終止發布。`);
+                errorTargets.push(null);
+                isStructuralError = true;
+            }
+
+            const targetsToHighlight = errorTargets.filter(t => t);
+            
+            if (errors.length > 0) {
+                errorPanel.style.display = 'block';
+                inputArea.style.display = 'none';
+                document.getElementById('error-compare').style.display = 'flex';
+                
+                document.getElementById('old-char-count').textContent = `(${oldContent ? oldContent.length : 0} 字)`;
+                document.getElementById('old-content-view').innerHTML = oldContent !== null ? highlightText(oldContent, targetsToHighlight) : oldContentStatus;
+                document.getElementById('new-char-count').textContent = `(${content.length} 字)`;
+                document.getElementById('new-content-view').innerHTML = highlightText(content, targetsToHighlight);
+
+                let header = rules.show_file_path_in_error !== false ? (rules.error_header_format || "📄 檔案：{path}\n------------------------\n").replace("{path}", fullPath) : "";
+                let displayErrors = '';
+                errors.forEach((err, i) => { displayErrors += markError(err, errorTargets[i], oldContent) + '\n'; });
+                document.getElementById('error-list').textContent = header + displayErrors;
+
+                if (isStructuralError) {
+                    structErrorWarning.style.display = 'block';
+                    forceBtn.style.display = 'none'; // 結構錯誤絕對不給強制發布
+                } else if (repo && filePath && allowedRepos.includes(repo)) {
+                    forceBtn.style.display = 'block';
+                }
+            } else {
+                successPanel.style.display = 'block';
+                previewCache = { finalContent: content, deleteOldPath: deleteOldPathInput };
+                
+                document.getElementById('success-compare').style.display = 'flex';
+                
+                document.getElementById('old-char-count-success').textContent = `(${oldContent ? oldContent.length : 0} 字)`;
+                document.getElementById('old-content-view-success').innerHTML = oldContent !== null ? highlightText(oldContent, []) : oldContentStatus;
+                
+                const oldLen = oldContent ? oldContent.length : 0;
+                document.getElementById('final-char-count').textContent = `(舊檔 ${oldLen} 字 ➜ 新檔 ${content.length} 字)`;
+                document.getElementById('final-content-view').innerHTML = oldContent !== null ? renderDiff(oldContent, content) : content;
+
+                if (deleteOldPathInput) {
+                    document.getElementById('target-path-display').innerHTML = `<span style="color:#dc2626; font-weight:bold;">⚠️ 重命名警告：</span> 將發布至 <b>${repo}/${filePath}</b>，並刪除舊檔 <b>${deleteOldPathInput}</b>`;
+                }
+
+                if (DEPENDENCY_MAP[fullPath]) {
+                    depAlert.style.display = 'block';
+                    window._currentDeps = { trigger: fullPath, required: DEPENDENCY_MAP[fullPath] };
+                }
+            }
+        }
+
+        function copyDepCommand() {
+            if (!window._currentDeps) return;
+            const depsStr = window._currentDeps.required.map(d => `- \`${d}\``).join('\n');
+            const text = `我剛剛已發布了 \`${window._currentDeps.trigger}\`，請檢查並更新以下關聯檔案：\n${depsStr}`;
+            navigator.clipboard.writeText(text).then(() => alert('已複製連動指令，請貼回對話框。'));
+        }
+
+        function resetUI() {
+            document.getElementById('file-input-full').value = '';
+            document.getElementById('file-input-rename').value = '';
+            document.getElementById('delete-old-path').value = '';
+            document.getElementById('error-panel').style.display = 'none';
+            document.getElementById('success-panel').style.display = 'none';
+            document.getElementById('dep-alert').style.display = 'none';
+            document.getElementById('input-area').style.display = 'block';
+            document.getElementById('btn-publish').style.display = 'block';
+            document.getElementById('btn-force-publish').style.display = 'none';
+            document.getElementById('btn-reset-next').style.display = 'none';
+            document.getElementById('struct-error-warning').style.display = 'none';
+            
+            document.getElementById('error-compare').style.display = 'none';
+            document.getElementById('success-compare').style.display = 'none';
+            
+            const btn = document.getElementById('btn-publish');
+            btn.disabled = false; btn.textContent = '🚀 確認發布到倉庫';
+
+            const forceBtn = document.getElementById('btn-force-publish');
+            forceBtn.disabled = false;
+            forceBtn.textContent = '🚨 強制發布（忽略錯誤）';
+
+            oldContentCache = {};
+            previewCache = { finalContent: '', deleteOldPath: '' };
+            window._currentDeps = null;
+            switchTab('full');
+        }
+
+        function copyError() {
+            const errorText = document.getElementById('error-list').textContent;
+            navigator.clipboard.writeText(`網頁體檢報錯：\n${errorText}`).then(() => alert('已複製錯誤訊息，請貼回對話框。'));
+        }
+
+        async function publishFile(isForce = false) {
+            if (!currentToken) return alert('請先設定 Token');
+            
+            let targetBtn = isForce ? document.getElementById('btn-force-publish') : document.getElementById('btn-publish');
+            const originalText = targetBtn.textContent;
+            targetBtn.disabled = true; targetBtn.textContent = '處理中...';
+            
+            const repo = document.getElementById('target-repo').value;
+            const filePath = document.getElementById('target-file-path').value;
+            const deleteOldPath = previewCache.deleteOldPath;
+
+            if (!repo || !filePath) {
+                alert('發布失敗：未指定目標倉庫或路徑。');
+                targetBtn.disabled = false; targetBtn.textContent = originalText;
+                return;
+            }
+
+            try {
+                let finalContent = previewCache.finalContent;
+                if (!finalContent) {
+                    const inputId = currentInputMode === 'full' ? 'file-input-full' : 'file-input-rename';
+                    finalContent = document.getElementById(inputId).value;
+                }
+
+                if (!hasValidEof(finalContent, filePath)) throw new Error(`發布失敗：最終內容缺少 EOF (F/V/W)。`);
+
+                const base64Content = btoa(unescape(encodeURIComponent(finalContent)));
+                let commitMsg = `Update ${filePath} via Console`;
+                if (isForce) commitMsg += ' [FORCE]';
+
+                let sha = null;
+                try {
+                    const existing = await githubAPI(`/repos/${OWNER}/${repo}/contents/${filePath}`);
+                    if (existing && existing.sha) sha = existing.sha;
+                } catch(e) {}
+
+                const body = { message: commitMsg, content: base64Content };
+                if (sha) body.sha = sha;
+
+                // 1. 發布新檔
+                await githubAPI(`/repos/${OWNER}/${repo}/contents/${filePath}`, {
+                    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+                });
+
+                // 2. 刪除舊檔（如果有填寫）
+                let deleteStatus = '';
+                if (deleteOldPath) {
+                    const oldParts = deleteOldPath.split('/');
+                    if (oldParts.length >= 2) {
+                        const oldRepo = oldParts[0];
+                        const oldFilePath = oldParts.slice(1).join('/');
+                        try {
+                            const oldExisting = await githubAPI(`/repos/${OWNER}/${oldRepo}/contents/${oldFilePath}`);
+                            if (oldExisting && oldExisting.sha) {
+                                await githubAPI(`/repos/${OWNER}/${oldRepo}/contents/${oldFilePath}`, {
+                                    method: 'DELETE', 
+                                    headers: { 'Content-Type': 'application/json' }, 
+                                    body: JSON.stringify({ message: `Delete old file: ${oldFilePath}`, sha: oldExisting.sha })
+                                });
+                                deleteStatus = `<br><span style="font-size:0.85rem; color:#047857;">🗑️ 已成功刪除舊檔：${deleteOldPath}</span>`;
+                            }
+                        } catch (err) {
+                            deleteStatus = `<br><span style="font-size:0.85rem; color:#b91c1c;">⚠️ 新檔已發布，但刪除舊檔失敗：${err.message}</span>`;
+                        }
+                    }
+                }
+
+                const timeStr = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+                const forceTag = isForce ? '（強制發布）' : '';
+                
+                document.getElementById('success-message').innerHTML = `🎉 已成功寫入${forceTag}：<br><b>${repo}/${filePath}</b>${deleteStatus}<br><span style="font-size:0.85rem; color:#047857; font-weight:normal;">⏱️ 寫入時間：${timeStr}</span>`;
+                
+                document.getElementById('btn-publish').style.display = 'none';
+                document.getElementById('btn-force-publish').style.display = 'none';
+                
+                document.getElementById('error-panel').style.display = 'none';
+                document.getElementById('dep-alert').style.display = 'none';
+                document.getElementById('success-panel').style.display = 'block';
+                document.getElementById('btn-reset-next').style.display = 'block';
+                document.getElementById('success-compare').style.display = 'none';
+
+                hasUnpackedChanges = true;
+                updateStatus('build-status', 'running', '有新檔案！請點擊打包');
+
+            } catch (error) {
+                alert(`發布失敗：${error.message}`);
+                targetBtn.disabled = false; 
+                targetBtn.textContent = originalText;
+            }
+        }
+
+        async function createNewProject() {
+            if (!currentToken) return alert('請先設定 Token');
+            const name = document.getElementById('new-repo-name').value.trim();
+            const domain = document.getElementById('new-repo-domain').value;
+            const pkgNo = document.getElementById('new-repo-pkg').value.trim();
+            const code = document.getElementById('new-repo-code').value.trim();
+            const display = document.getElementById('new-repo-display').value.trim();
+
+            if (!name || !pkgNo || !code) return alert('請填寫完整資訊');
+            
+            const btn = document.getElementById('btn-create-repo');
+            btn.disabled = true; btn.textContent = '建立中...';
+
+            try {
+                await githubAPI(`/user/repos`, {
+                    method: 'POST', body: JSON.stringify({ name: name, private: false, auto_init: true })
+                });
+
+                await new Promise(r => setTimeout(r, 2000));
+                const v = Math.floor(Date.now() / 1000).toString();
+
+                const metaContent = JSON.stringify({
+                    domain: domain, pkg_no: pkgNo, code: code, display: display,
+                    _EOF: { F: `${name}/meta.json`, V: v, W: `init-${pkgNo}#1` }
+                }, null, 2);
+                
+                await githubAPI(`/repos/${OWNER}/${name}/contents/meta.json`, {
+                    method: 'PUT', body: JSON.stringify({ message: 'Init meta.json', content: btoa(unescape(encodeURIComponent(metaContent))) })
+                });
+
+                const wfContent = `# WF-HANDOFF (${display})\n\n## 專案基礎資訊\n\n- 專案編號：${pkgNo}\n- 領域代碼：${domain}\n\n/* ═══ EOF ═══\nF: AI-General/docs/p${pkgNo}/WF-HANDOFF.md\nV: ${v}\nW: init-${pkgNo}#1\n═══ */`;
+                
+                let wfSha = null;
+                try {
+                    const existWf = await githubAPI(`/repos/${OWNER}/AI-General/contents/docs/p${pkgNo}/WF-HANDOFF.md`);
+                    wfSha = existWf.sha;
+                } catch(e) {}
+
+                const wfBody = { message: 'Init WF-HANDOFF', content: btoa(unescape(encodeURIComponent(wfContent))) };
+                if (wfSha) wfBody.sha = wfSha;
+
+                await githubAPI(`/repos/${OWNER}/AI-General/contents/docs/p${pkgNo}/WF-HANDOFF.md`, {
+                    method: 'PUT', body: JSON.stringify(wfBody)
+                });
+
+                alert(`✅ 專案 ${name} 建立成功！`);
+                document.getElementById('new-repo-name').value = '';
+                document.getElementById('new-repo-pkg').value = '';
+                document.getElementById('new-repo-code').value = '';
+                document.getElementById('new-repo-display').value = '';
+            } catch (error) {
+                alert(`建庫失敗：${error.message}`);
+            } finally {
+                btn.disabled = false; btn.textContent = '🚀 一鍵建立專案';
+            }
+        }
+    </script>
+</head>
+<body>
+<div class="container">
+    
+    <div class="sticky-header">
+        <div class="card">
+            <div class="card-title">🚀 AI 控制台</div>
+            <div class="subtitle">極簡發布與打包中心</div>
+            <button class="btn-primary" id="btn-trigger" onclick="triggerBuild()">▶️ 打包</button>
+            <div class="status-box">
+                <div class="status-dot" id="build-status-dot"></div>
+                <div id="build-status-text">等待操作</div>
+            </div>
+            
+            <div style="margin-top: 15px; border-top: 1px solid var(--border); padding-top: 15px;">
+                <button class="btn-success" id="btn-backup" onclick="triggerBackup()">📦 一鍵全量備份</button>
+                <div class="status-box">
+                    <div class="status-dot" id="backup-status-dot"></div>
+                    <div id="backup-status-text">等待操作</div>
+                </div>
+            </div>
+
+            <div style="margin-top: 15px; border-top: 1px solid var(--border); padding-top: 15px;">
+                <select id="deploy-repo-select" onchange="checkLatestDeployStatus()" style="margin-bottom: 8px;">
+                    <option value="">載入專案中...</option>
+                </select>
+                <div style="display:flex; gap:10px; margin-bottom: 10px;">
+                    <input type="text" id="deploy-workflow" value="deploy.yml" placeholder="Workflow 檔名" style="flex:1; margin-bottom:0;" onchange="checkLatestDeployStatus()">
+                    <input type="text" id="deploy-branch" value="main" placeholder="分支" style="width: 70px; margin-bottom:0;">
+                    <button class="btn-success" id="btn-deploy" onclick="triggerProjectDeploy()" style="width: auto; white-space: nowrap;">🚀 部署</button>
+                </div>
+                <div class="status-box">
+                    <div class="status-dot" id="deploy-status-dot"></div>
+                    <div id="deploy-status-text">等待操作</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">📦 檔案體檢與發布</div>
+        
+        <div id="input-area">
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="full" onclick="switchTab('full')">📄 常規發布 (FULL)</button>
+                <button class="tab-btn" data-tab="rename" onclick="switchTab('rename')">🔄 重命名發布 (RENAME)</button>
+            </div>
+            
+            <div id="input-full" class="tab-content active">
+                <textarea id="file-input-full" placeholder="請在此貼上 AI 交付的完整檔案內容..."></textarea>
+            </div>
+            
+            <div id="input-rename" class="tab-content">
+                <div class="rename-input-box">
+                    <label>⚠️ 準備刪除的舊路徑 (必填，如 AI-General/docs/p90/90-P-Data.md)</label>
+                    <input type="text" id="delete-old-path" placeholder="在此貼上舊路徑，發布成功後會自動刪除">
+                </div>
+                <textarea id="file-input-rename" placeholder="請在此貼上新檔案的完整內容..."></textarea>
+            </div>
+            
+            <button class="btn-primary" onclick="processFile()">🔍 檢查並準備發布</button>
+        </div>
+
+        <div class="error-panel" id="error-panel">
+            <div id="struct-error-warning" style="display:none; background-color:#dc2626; color:white; padding:15px; border-radius:8px; margin-bottom:15px; font-weight:bold; text-align:center; font-size:1.05rem; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
+                ⚠️ 系統偵測到結構性錯誤。<br>
+                已物理阻斷發布功能。請修正內容。
+            </div>
+            <div style="font-weight:bold; margin-bottom:10px;">❌ 檢查未通過</div>
+            <div class="error-list" id="error-list"></div>
+            
+            <div id="error-compare" class="compare-container" style="display:none;">
+                <div class="compare-card">
+                    <div class="compare-card-title">
+                        <span>📦 舊檔</span>
+                        <span class="char-count" id="old-char-count">(0 字)</span>
+                    </div>
+                    <pre id="old-content-view"></pre>
+                </div>
+                <div class="compare-card">
+                    <div class="compare-card-title">
+                        <span>📝 新檔</span>
+                        <span class="char-count" id="new-char-count">(0 字)</span>
+                    </div>
+                    <pre id="new-content-view"></pre>
+                </div>
+            </div>
+            
+            <button class="btn-primary" style="background:#ef4444; margin-bottom:10px;" onclick="copyError()">📋 一鍵複製錯誤訊息</button>
+            <button class="btn-primary" style="background:#64748b;" onclick="resetUI()">🔄 清除並重新貼上</button>
+            <button class="btn-danger" id="btn-force-publish" style="display:none; margin-top:10px; background:#991b1b;" onclick="publishFile(true)">🚨 強制發布（忽略錯誤）</button>
+        </div>
+
+        <div class="success-panel" id="success-panel">
+            <div style="font-weight:bold; margin-bottom:10px;" id="success-message">✅ 體檢通過！</div>
+            <div style="font-size:0.85rem; margin-bottom:15px; font-family:monospace; background:#fff; padding:8px; border-radius:5px;" id="target-path-display"></div>
+            <input type="hidden" id="target-repo">
+            <input type="hidden" id="target-file-path">
+            
+            <div id="success-compare" class="compare-container" style="display:none;">
+                <div class="compare-card">
+                    <div class="compare-card-title">
+                        <span>📦 舊檔</span>
+                        <span class="char-count" id="old-char-count-success">(0 字)</span>
+                    </div>
+                    <pre id="old-content-view-success"></pre>
+                </div>
+                <div class="compare-card">
+                    <div class="compare-card-title">
+                        <span>✅ 最終結果</span>
+                        <span class="char-count" id="final-char-count">(0 字)</span>
+                    </div>
+                    <pre id="final-content-view"></pre>
+                </div>
+            </div>
+
+            <div id="dep-alert" class="dep-alert">
+                <div class="dep-alert-title">⚠️ 連動更新提醒</div>
+                <div>此檔案有依賴其他檔案，請複製下方指令貼回對話，由 AI 為您處理後續更新。</div>
+                <button class="dep-alert-btn" onclick="copyDepCommand()">📋 一鍵複製連動指令</button>
+            </div>
+
+            <button class="btn-success" id="btn-publish" onclick="publishFile(false)">🚀 確認發布到倉庫</button>
+            <button class="btn-primary" id="btn-reset-next" style="display:none; margin-top:10px;" onclick="resetUI()">📝 繼續貼上下一個檔案</button>
+            <button class="btn-primary" style="background:#64748b; margin-top:10px;" onclick="resetUI()">取消</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">🏗️ 建立新專案</div>
+        <input type="text" id="new-repo-name" placeholder="Repo 名稱 (如 AI-WA-NEW)">
+        <div style="display:flex; gap:10px;">
+            <select id="new-repo-domain" style="width:30%; padding:12px; border:1px solid #ccc; border-radius:8px;">
+                <option value="W">W (Web)</option>
+                <option value="V">V (VBA)</option>
+                <option value="D">D (Data)</option>
+                <option value="M">M (Mobile)</option>
+                <option value="E">E (Engine)</option>
+            </select>
+            <input type="text" id="new-repo-pkg" placeholder="編號 (如 92)" style="width:30%; margin-bottom:0;">
+            <input type="text" id="new-repo-code" placeholder="代碼 (如 UPGRADE)" style="width:40%; margin-bottom:0;">
+        </div>
+        <input type="text" id="new-repo-display" placeholder="顯示名稱 (如 升級系統)" style="margin-top:10px;">
+        <button class="btn-primary" id="btn-create-repo" onclick="createNewProject()">🚀 一鍵建立專案</button>
+    </div>
+
+    <details>
+        <summary>🔑 憑證管理中心 (Token)</summary>
+        <div class="card" style="box-shadow:none; border:none; padding:0; margin-top:10px;">
+            <input type="text" id="new-token-name" placeholder="名稱 (如：主要 GitHub)">
+            <input type="password" id="new-token-value" placeholder="Token 字串">
+            <button class="btn-primary" onclick="addToken()">➕ 新增 Token</button>
+            <div style="margin-top: 15px; border-top: 1px solid var(--border);" id="token-list"></div>
+        </div>
+    </details>
+
+</div>
+</body>
+</html>
+<!-- EOF
+F: AI-infra/index.html
+V: 1793010000
+W: ai-system-009
+EOF -->

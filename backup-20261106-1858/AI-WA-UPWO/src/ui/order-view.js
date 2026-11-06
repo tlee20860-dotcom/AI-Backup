@@ -1,0 +1,489 @@
+import { AppState } from '../config/state.js';
+import { createIcons, ArrowUpDown, ArrowUp, ArrowDown, Trash2, Inbox, Search, ChevronLeft, ChevronRight, Settings, Plus, AlertCircle } from 'lucide';
+
+/**
+ * 輔助函式：將可能是字串或陣列的 route 統一轉為陣列
+ */
+function normalizeRoute(route) {
+  if (Array.isArray(route)) return route;
+  if (typeof route === 'string') {
+    if (route.includes(',')) return route.split(',').map(s => s.trim()).filter(Boolean);
+    if (route.includes('→')) return route.split('→').map(s => s.trim()).filter(Boolean);
+    return [route.trim()];
+  }
+  return [];
+}
+
+/**
+ * 將 Excel 日期轉為 YYYY-MM-DD，並防呆過濾
+ */
+export function formatExcelDate(val) {
+  if (!val) return "";
+  if (typeof val === 'string') {
+    if (val.includes('T')) return val.split('T')[0];
+    if (val.includes('-') || val.includes('/')) return val.trim();
+  }
+  const num = Number(val);
+  if (!isNaN(num) && num > 20000 && num < 80000) {
+    const date = new Date((num - 25569) * 86400 * 1000);
+    if (!isNaN(date.getTime())) return date.toISOString().split('T')[0];
+  }
+  return String(val).trim();
+}
+
+/**
+ * 取得工單類別
+ */
+function getOrderCategory(order) {
+  if (order.data && order.data.category) {
+    return String(order.data.category).toUpperCase();
+  }
+  const match = String(order.id).match(/^[a-zA-Z]+/);
+  return match ? match[0].toUpperCase() : '其他';
+}
+
+// 全域狀態暫存，避免切換頁面時遺失
+const viewStates = {};
+
+/**
+ * 核心渲染器：完全數據驅動
+ */
+export function renderOrderView({ containerId, orders, visibleFields = [], isAdmin = false, pageKey, route_templates = [], isReadOnly = false, allowStatusChange = false, groupBy = null, onAction }) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  if (!viewStates[pageKey]) {
+    viewStates[pageKey] = { viewType: 'table', sortKey: '', sortOrder: 'asc', filters: {} };
+  }
+  const state = viewStates[pageKey];
+
+  // 1. 資料清洗
+  let cleanOrders = orders.filter(o => {
+    const id = String(o.id || '');
+    return id && !id.includes('***') && !id.includes('訂單');
+  });
+
+  // 2. 依配置提取顯示欄位
+  let displayFields = visibleFields.filter(f => f.isVisible);
+  if (displayFields.length === 0) {
+    displayFields = [
+      { key: 'id', label: '發票', isVisible: true, isEditable: false },
+      { key: 'status', label: '生產進度', isVisible: true, isEditable: false }
+    ];
+  }
+
+  // 名詞替換：若欄位 key 為 route_select 或 route，一律顯示為「製程路線圖」
+  displayFields = displayFields.map(f => {
+    if (f.key === 'route_select' || f.key === 'route') {
+      return Object.assign({}, f, { label: '製程路線圖' });
+    }
+    return f;
+  });
+
+  // 3. 全域事件委派
+  if (!window._orderViewListenerAdded) {
+    document.addEventListener('click', (e) => {
+      const viewBtn = e.target.closest('[data-action="switch-view"]');
+      if (viewBtn) {
+        const key = viewBtn.dataset.pageKey;
+        if (viewStates[key]) {
+          viewStates[key].viewType = viewBtn.dataset.view;
+          window.dispatchEvent(new Event(`refresh-${key}`));
+        }
+        return;
+      }
+
+      const th = e.target.closest('th[data-sort]');
+      if (th) {
+        const key = th.dataset.pageKey;
+        const sortKey = th.dataset.sort;
+        if (viewStates[key]) {
+          if (viewStates[key].sortKey === sortKey) {
+            viewStates[key].sortOrder = viewStates[key].sortOrder === 'asc' ? 'desc' : 'asc';
+          } else {
+            viewStates[key].sortKey = sortKey;
+            viewStates[key].sortOrder = 'asc';
+          }
+          window.dispatchEvent(new Event(`refresh-${key}`));
+        }
+        return;
+      }
+      
+      const actionBtn = e.target.closest('[data-action="delete"]');
+      if (actionBtn) {
+        if (onAction) onAction('delete', actionBtn.dataset.id);
+      }
+
+      const addRouteBtn = e.target.closest('[data-action="open-route-builder"]');
+      if (addRouteBtn) {
+        const id = addRouteBtn.dataset.id;
+        const cat = addRouteBtn.dataset.category;
+        window.dispatchEvent(new CustomEvent('open-route-builder', { 
+          detail: { orderId: id, defaultCategory: cat } 
+        }));
+      }
+    });
+
+    document.addEventListener('input', (e) => {
+      const searchInput = e.target.closest('input[data-action="global-search"]');
+      if (searchInput) {
+        const key = searchInput.dataset.pageKey;
+        if (viewStates[key]) {
+          viewStates[key].filters['__GLOBAL__'] = searchInput.value.toLowerCase();
+          window.dispatchEvent(new Event(`refresh-${key}`));
+        }
+      }
+    });
+
+    document.addEventListener('change', (e) => {
+      const inlineInput = e.target.closest('input[data-action="inline-edit"]');
+      if (inlineInput) {
+        const id = inlineInput.dataset.id;
+        const key = inlineInput.dataset.key;
+        const value = inlineInput.value;
+        window.dispatchEvent(new CustomEvent('inline-edit', { detail: { id, key, value } }));
+        return;
+      }
+
+      const routeSelect = e.target.closest('select[data-action="select-route"]');
+      if (routeSelect) {
+        const id = routeSelect.dataset.id;
+        const templateName = routeSelect.value;
+        window.dispatchEvent(new CustomEvent('change-route', { detail: { id, templateName } }));
+        return;
+      }
+    });
+
+    window._orderViewListenerAdded = true;
+  }
+
+  // 4. 處理排序與全域篩選
+  if (state.sortKey) {
+    cleanOrders.sort((a, b) => {
+      let valA = getOrderValue(a, state.sortKey);
+      let valB = getOrderValue(b, state.sortKey);
+      return (valA < valB ? -1 : 1) * (state.sortOrder === 'asc' ? 1 : -1);
+    });
+  }
+
+  const globalFilter = state.filters['__GLOBAL__'];
+  if (globalFilter) {
+    cleanOrders = cleanOrders.filter(o => {
+      return displayFields.some(f => {
+        const val = String(getOrderValue(o, f.key) || '').toLowerCase();
+        return val.includes(globalFilter);
+      });
+    });
+  }
+
+  const allStatuses = AppState.getStatuses() || [];
+  // 判斷是否為工單進度表（看板），允許推進度
+  const isKanban = groupBy === 'status' || pageKey === 'kanban';
+
+  // 5. 生成 HTML
+  const viewToggleHtml = `
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+      <div class="segmented-control">
+        <button data-action="switch-view" data-view="card" data-page-key="${pageKey}" class="segment-btn ${state.viewType === 'card' ? 'active' : ''}">卡片</button>
+        <button data-action="switch-view" data-view="table" data-page-key="${pageKey}" class="segment-btn ${state.viewType === 'table' ? 'active' : ''}">表格</button>
+      </div>
+      <div class="relative w-full sm:w-64">
+        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+          <i data-lucide="search" class="w-4 h-4"></i>
+        </div>
+        <input type="text" data-action="global-search" data-page-key="${pageKey}" value="${state.filters['__GLOBAL__'] || ''}" class="w-full pl-9 pr-4 py-1.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-brand transition-colors shadow-sm" placeholder="搜尋所有欄位">
+      </div>
+    </div>
+  `;
+
+  if (cleanOrders.length === 0) {
+    container.innerHTML = viewToggleHtml + `
+      <div class="flex flex-col items-center justify-center h-64 text-slate-400 gap-3 bg-white rounded-2xl border border-slate-100 shadow-soft mt-4">
+        <i data-lucide="inbox" class="w-12 h-12 opacity-30"></i>
+        <span class="text-base font-medium">目前無工單資料</span>
+      </div>
+    `;
+    createIcons({ icons: { Inbox }, attrs: { class: 'w-12 h-12' } });
+    return;
+  }
+
+  // 輔助渲染函數：差異標記 HTML
+  const renderDiffIcon = (order, fieldKey) => {
+    if (order.diff && order.diff[fieldKey]) {
+      return `<span class="text-rose-500 ml-1 cursor-help flex-shrink-0" title="Excel 值: ${order.diff[fieldKey].excel}"><i data-lucide="alert-circle" class="w-4 h-4 inline-block"></i></span>`;
+    }
+    return '';
+  };
+
+  // 輔助渲染函數：單一工單卡片
+  const renderCard = (order) => {
+    return `
+      <div class="glass-card p-4 flex flex-col gap-2">
+        ${displayFields.map(f => {
+          const val = getOrderValue(order, f.key);
+          const diffHtml = renderDiffIcon(order, f.key);
+          
+          if (f.key === 'id') {
+            // 💡 若為唯讀，單號不生成按鈕
+            if (isReadOnly) {
+              return `<div class="text-sm"><span class="text-slate-400">${f.label}:</span> <span class="font-bold text-slate-700 text-base">${val || '-'}</span></div>`;
+            }
+            return `<div class="text-sm"><span class="text-slate-400">${f.label}:</span> <button data-action="open-order-detail" data-id="${order.id}" class="font-bold text-brand hover:underline text-base">${val || '-'}</button></div>`;
+          }
+          
+          if (f.key === 'status') {
+            // 若完全唯讀或不是看板，顯示純文字
+            if ((isReadOnly && !allowStatusChange) || !isKanban) {
+              return `<div class="text-sm flex items-center"><span class="text-slate-400">${f.label}:</span> <span class="font-bold text-slate-700 ml-1">${order.status}</span>${diffHtml}</div>`;
+            }
+
+            // 看板的上下步按鈕
+            let route = order.route ? normalizeRoute(order.route) : allStatuses;
+            if (route.length === 0) route = allStatuses;
+
+            let idx = route.indexOf(order.status);
+            if (idx === -1) idx = 0;
+            const isFirst = idx <= 0;
+            const isLast = idx >= route.length - 1;
+            const prevStep = isFirst ? '' : route[idx - 1];
+            const nextStep = isLast ? '' : route[idx + 1];
+            const routeStr = JSON.stringify(route).replace(/"/g, '&quot;');
+
+            return `
+              <div class="text-sm flex flex-col gap-1">
+                <span class="text-slate-400 flex items-center">${f.label}: ${diffHtml}</span>
+                <div class="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-1 py-0.5 w-fit max-w-full">
+                  <button data-action="prev-step" data-id="${order.id}" data-route="${routeStr}" data-status="${order.status}" 
+                    class="flex items-center text-xs p-1 rounded text-slate-600 hover:bg-slate-200 transition-colors ${isFirst ? 'opacity-30 cursor-not-allowed' : ''}" ${isFirst ? 'disabled' : ''}>
+                    <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                    <span class="truncate max-w-[60px]">${prevStep}</span>
+                  </button>
+                  <span class="font-bold text-slate-700 text-sm px-1 min-w-[60px] text-center truncate max-w-[100px]">${order.status}</span>
+                  <button data-action="next-step" data-id="${order.id}" data-route="${routeStr}" data-status="${order.status}" 
+                    class="flex items-center text-xs p-1 rounded text-slate-600 hover:bg-slate-200 transition-colors ${isLast ? 'opacity-30 cursor-not-allowed' : ''}" ${isLast ? 'disabled' : ''}>
+                    <span class="truncate max-w-[60px]">${nextStep}</span>
+                    <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                  </button>
+                </div>
+              </div>
+            `;
+          }
+
+          // 顯示製程路線圖（取代原本的下拉選單）
+          if (f.key === 'route_select') {
+            const orderCat = getOrderCategory(order);
+            const availableTemplates = (route_templates || []).filter(t => {
+              if (!t.categories || t.categories.length === 0) return true;
+              return t.categories.includes(orderCat);
+            });
+
+            const currentRouteArr = order.route ? normalizeRoute(order.route) : [];
+            let currentMatchName = '自訂流程';
+            availableTemplates.forEach(t => {
+              if (JSON.stringify(t.steps) === JSON.stringify(currentRouteArr)) {
+                currentMatchName = t.name;
+              }
+            });
+
+            return `
+              <div class="text-sm flex flex-col gap-1">
+                <span class="text-slate-400">${f.label}:</span>
+                <span class="font-medium text-slate-700">${currentMatchName}</span>
+              </div>
+            `;
+          }
+
+          // 若為一般顯示 route
+          if (f.key === 'route') {
+            let displayVal = normalizeRoute(val).join(' → ');
+            return `<div class="text-sm flex flex-col gap-1"><span class="text-slate-400">${f.label}:</span> <span class="font-medium text-slate-700">${displayVal || '-'}</span>${diffHtml}</div>`;
+          }
+
+          // 移除行內編輯：其餘所有可編輯欄位一律顯示純文字
+          return `<div class="text-sm flex items-center"><span class="text-slate-400">${f.label}:</span> <span class="font-medium text-slate-700 ml-1">${val || '-'}</span>${diffHtml}</div>`;
+        }).join('')}
+        ${isAdmin ? `
+          <div class="mt-auto pt-2 border-t border-slate-100 flex justify-end">
+            <button data-action="delete" data-id="${order.id}" class="text-xs text-rose-500 hover:bg-rose-50 px-2 py-1 rounded">刪除</button>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  };
+
+  // 輔助渲染函數：工單表格
+  const renderTable = (orderList) => {
+    return `
+      <div class="bg-white rounded-[20px] border border-slate-200/60 shadow-soft overflow-x-auto w-full mb-4">
+        <table class="w-full text-left border-collapse min-w-full">
+          <thead class="sticky top-0 bg-slate-50 z-10 shadow-sm">
+            <tr class="border-b border-slate-200/60 text-sm font-semibold text-slate-600">
+              ${displayFields.map(f => `
+                <th class="px-4 py-3 cursor-pointer hover:bg-slate-100 transition-colors whitespace-nowrap min-w-[120px]" data-sort="${f.key}" data-page-key="${pageKey}">
+                  <div class="flex items-center gap-1">${f.label} <i data-lucide="${state.sortKey === f.key ? (state.sortOrder === 'asc' ? 'arrow-up' : 'arrow-down') : 'arrow-up-down'}" class="w-3 h-3 ${state.sortKey === f.key ? 'text-brand' : 'text-slate-300'}"></i></div>
+                </th>
+              `).join('')}
+              ${isAdmin ? `<th class="px-4 py-3 text-center whitespace-nowrap min-w-[100px]">操作</th>` : ''}
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 text-sm text-slate-700">
+            ${orderList.map(order => `
+              <tr class="hover:bg-slate-50/50 transition-colors">
+                ${displayFields.map(f => {
+                  const val = getOrderValue(order, f.key);
+                  const diffHtml = renderDiffIcon(order, f.key);
+
+                  if (f.key === 'id') {
+                    // 💡 若為唯讀，單號不生成按鈕
+                    if (isReadOnly) {
+                      return `<td class="px-4 py-3 whitespace-nowrap font-bold text-slate-700">${val || '-'}</td>`;
+                    }
+                    return `<td class="px-4 py-3 whitespace-nowrap"><button data-action="open-order-detail" data-id="${order.id}" class="font-bold text-brand hover:underline text-base">${val || '-'}</button></td>`;
+                  }
+                  
+                  if (f.key === 'status') {
+                    if ((isReadOnly && !allowStatusChange) || !isKanban) {
+                      return `<td class="px-4 py-3 whitespace-nowrap font-bold text-slate-700">${order.status}${diffHtml}</td>`;
+                    }
+
+                    // 看板的上下步按鈕
+                    let route = order.route ? normalizeRoute(order.route) : allStatuses;
+                    if (route.length === 0) route = allStatuses;
+
+                    let idx = route.indexOf(order.status);
+                    if (idx === -1) idx = 0;
+                    const isFirst = idx <= 0;
+                    const isLast = idx >= route.length - 1;
+                    const prevStep = isFirst ? '' : route[idx - 1];
+                    const nextStep = isLast ? '' : route[idx + 1];
+                    const routeStr = JSON.stringify(route).replace(/"/g, '&quot;');
+
+                    return `
+                      <td class="px-4 py-3 whitespace-nowrap">
+                        <div class="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-1 py-0.5 w-fit max-w-full">
+                          <button data-action="prev-step" data-id="${order.id}" data-route="${routeStr}" data-status="${order.status}" 
+                            class="flex items-center text-xs p-1 rounded text-slate-600 hover:bg-slate-200 transition-colors ${isFirst ? 'opacity-30 cursor-not-allowed' : ''}" ${isFirst ? 'disabled' : ''}>
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                            <span class="truncate max-w-[60px]">${prevStep}</span>
+                          </button>
+                          <span class="font-bold text-slate-700 text-sm px-1 min-w-[60px] text-center truncate max-w-[100px]">${order.status}</span>
+                          <button data-action="next-step" data-id="${order.id}" data-route="${routeStr}" data-status="${order.status}" 
+                            class="flex items-center text-xs p-1 rounded text-slate-600 hover:bg-slate-200 transition-colors ${isLast ? 'opacity-30 cursor-not-allowed' : ''}" ${isLast ? 'disabled' : ''}>
+                            <span class="truncate max-w-[60px]">${nextStep}</span>
+                            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                          </button>
+                          ${diffHtml}
+                        </div>
+                      </td>
+                    `;
+                  }
+
+                  // 顯示製程路線圖（取代原本的下拉選單）
+                  if (f.key === 'route_select') {
+                    const orderCat = getOrderCategory(order);
+                    const availableTemplates = (route_templates || []).filter(t => {
+                      if (!t.categories || t.categories.length === 0) return true;
+                      return t.categories.includes(orderCat);
+                    });
+
+                    const currentRouteArr = order.route ? normalizeRoute(order.route) : [];
+                    let currentMatchName = '自訂流程';
+                    availableTemplates.forEach(t => {
+                      if (JSON.stringify(t.steps) === JSON.stringify(currentRouteArr)) {
+                        currentMatchName = t.name;
+                      }
+                    });
+
+                    return `<td class="px-4 py-3 whitespace-nowrap text-slate-600">${currentMatchName}</td>`;
+                  }
+                  
+                  // 若為一般顯示 route
+                  if (f.key === 'route') {
+                    let displayVal = normalizeRoute(val).join(' → ');
+                    return `<td class="px-4 py-3 whitespace-nowrap text-slate-600">${displayVal || '-'}${diffHtml}</td>`;
+                  }
+
+                  // 移除行內編輯：其餘所有可編輯欄位一律顯示純文字
+                  return `<td class="px-4 py-3 whitespace-nowrap">${val || '-'}${diffHtml}</td>`;
+                }).join('')}
+                ${isAdmin ? `
+                  <td class="px-4 py-3 text-center whitespace-nowrap">
+                    <button data-action="delete" data-id="${order.id}" class="text-xs text-rose-500 hover:bg-rose-50 px-2 py-1 rounded">刪除</button>
+                  </td>
+                ` : ''}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  };
+
+  let contentHtml = '';
+
+  if (groupBy === 'status') {
+    const statuses = AppState.getStatuses() || [];
+    const grouped = {};
+    statuses.forEach(s => grouped[s] = []);
+    
+    cleanOrders.forEach(o => {
+      const s = o.status || '未知狀態';
+      if (!grouped[s]) grouped[s] = [];
+      grouped[s].push(o);
+    });
+
+    contentHtml = Object.keys(grouped).map(status => {
+      const groupOrders = grouped[status];
+      if (groupOrders.length === 0) return '';
+      
+      let listHtml = '';
+      if (state.viewType === 'card') {
+        listHtml = `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-2">${groupOrders.map(o => renderCard(o)).join('')}</div>`;
+      } else {
+        listHtml = renderTable(groupOrders);
+      }
+
+      return `
+        <div class="mb-8 p-4 bg-white/50 border border-slate-200/60 rounded-[20px] shadow-sm">
+          <div class="flex items-center gap-2 mb-3 ml-2">
+            <h3 class="text-lg font-bold text-slate-800">${status}</h3>
+            <span class="text-xs px-2 py-0.5 bg-brand/10 text-brand rounded-full font-bold">${groupOrders.length} 單</span>
+          </div>
+          ${listHtml}
+        </div>
+      `;
+    }).join('');
+
+  } else {
+    if (state.viewType === 'card') {
+      contentHtml = `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-4">${cleanOrders.map(o => renderCard(o)).join('')}</div>`;
+    } else {
+      contentHtml = renderTable(cleanOrders);
+    }
+  }
+
+  container.innerHTML = viewToggleHtml + contentHtml;
+  createIcons({ icons: { ArrowUpDown, ArrowUp, ArrowDown, Search, ChevronLeft, ChevronRight, Settings, Plus, AlertCircle }, attrs: { class: 'w-4 h-4' } });
+}
+
+/**
+ * 取得欄位值 (處理巢狀 data 與特殊日期格式)
+ */
+function getOrderValue(order, key) {
+  if (key === 'uploadDate' || key === 'dueDate' || key === 'statusUpdateDate') {
+    return formatExcelDate(order[key]);
+  }
+  if (key === 'status') {
+    return order.status || '未知'; 
+  }
+  if (order.data && order.data[key] !== undefined) {
+    return order.data[key];
+  }
+  return order[key] !== undefined ? order[key] : '';
+}
+
+/*
+F: AI-WA-UPWO/src/ui/order-view.js
+V: 1793092000
+W: UPGRADE-007
+*/
