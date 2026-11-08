@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>UPGRADE-WO | 生產進度控制台</title>
+  <meta name="description" content="先鋒印刷 - 生產進度控制台">
+  <meta name="theme-color" content="#6366F1">
+  
+  <!-- PWA 設定檔 -->
+  <link rel="manifest" href="/manifest.json">
+  
+  <!-- iOS 專用 PWA Meta -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="UPGRADE">
+  <link rel="apple-touch-icon" href="/icons/icon.png">
+  
+  <!-- 引入全域樣式 (由 Vite 處理) -->
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body class="bg-[#F4F7FB] text-slate-800 font-sans min-h-screen antialiased overflow-hidden">
+
+  <!-- 初始載入畫面 -->
+  <div id="app-loading" class="fixed inset-0 z-[999] flex flex-col items-center justify-center bg-[#F4F7FB] transition-opacity duration-300">
+    <div class="w-12 h-12 rounded-xl bg-[#6366F1] flex items-center justify-center text-white shadow-lg shadow-indigo-500/30 mb-4 animate-bounce">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-layers"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>
+    </div>
+    <div class="text-sm font-medium text-slate-500 animate-pulse">系統載入中...</div>
+  </div>
+
+  <!-- 系統掛載點，確保在手機與桌機都能正確撐滿高度 -->
+  <div id="app-root" class="w-full h-[100dvh] overflow-hidden"></div>
+
+  <!-- 引入 SortableJS 用於支援手機觸控拖曳排序 -->
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+
+  <!-- 系統啟動入口 (Vite 會自動處理 Module 依賴) -->
+  <script type="module" src="/src/engine/main.js"></script>
+</body>
+</html>
+
+<!--
+F: AI-WA-UPWO/index.html
+V: 1792946000
+W: UPGRADE-005
+-->
