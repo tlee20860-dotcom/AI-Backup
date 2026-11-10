@@ -1,0 +1,45 @@
+name: Deploy to Cloudflare Pages
+
+on:
+  workflow_dispatch: # 改為僅能手動觸發
+
+# 防止連續點擊觸發多次部署，節省資源
+concurrency:
+  group: "pages-deploy"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    name: Build and Deploy
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Dependencies
+        # 若專案無 package-lock.json，使用 npm install 避免報錯
+        run: npm install
+
+      - name: Build Project
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=ai-wa-upwo
+
+# ═══ EOF ═══
+# F: AI-WA-UPWO/.github/workflows/deploy.yml
+# V: 1792922200
+# W: UPGRADE-004
+# ═══
