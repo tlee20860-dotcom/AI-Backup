@@ -1,0 +1,22 @@
+{
+  "name": "UPGRADE-WO 生產進度控制台",
+  "short_name": "UPGRADE",
+  "description": "先鋒印刷 - 流水線進度控制台",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F4F7FB",
+  "theme_color": "#6366F1",
+  "icons": [
+    {
+      "src": "/icons/icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "_EOF": {
+    "F": "AI-WA-UPWO/public/manifest.json",
+    "V": "1792923000",
+    "W": "UPGRADE-004"
+  }
+}
