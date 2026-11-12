@@ -1,0 +1,563 @@
+# ============================================
+# setup-structure.yml — 動態共享包打包腳本 (統一大腦版)
+# 用途：手動觸發，所有生成物只寫入 AI-Packages，絕不回寫源檔
+# ============================================
+
+name: Build Shared Packages
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout AI-infra
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.CROSS_REPO_PAT }}
+
+      - name: "Step 0: 同步 Repos 名單 (Sync Repos List)"
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_PAT }}
+        run: |
+          mkdir -p config
+          
+          echo '[' > /tmp/projects_array.json
+          
+          REPOS=$(gh search repos --owner tlee20860-dotcom --topic ai-systems --json name,owner --jq '.[] | select(.name != "AI-kernel" and .name != "AI-General" and .name != "AI-infra" and .name != "AI-packages" and .name != "old-AI-WA-FAMILY") | .owner.login + "/" + .name')
+          
+          FIRST=true
+          for REPO in $REPOS; do
+            META=$(curl -s -H "Authorization: token $GH_TOKEN" "https://raw.githubusercontent.com/$REPO/main/meta.json")
+            if ! echo "$META" | grep -q "pkg_no"; then
+              META=$(curl -s -H "Authorization: token $GH_TOKEN" "https://raw.githubusercontent.com/$REPO/master/meta.json")
+            fi
+            
+            if echo "$META" | grep -q "pkg_no"; then
+              DOMAIN=$(echo "$META" | jq -r '.domain')
+              PKG_NO=$(echo "$META" | jq -r '.pkg_no')
+              CODE=$(echo "$META" | jq -r '.code // "-"')
+              DISPLAY=$(echo "$META" | jq -r '.display // "-"')
+            else
+              continue
+            fi
+
+            if [ "$FIRST" = true ]; then FIRST=false; else echo ',' >> /tmp/projects_array.json; fi
+            echo "    {\"repo\": \"$REPO\", \"domain\": \"$DOMAIN\", \"code\": \"$CODE\", \"display\": \"$DISPLAY\", \"pkg_no\": \"$PKG_NO\"}" >> /tmp/projects_array.json
+          done
+
+          OLD_REPO="tlee20860-dotcom/old-AI-WA-FAMILY"
+          OLD_META=$(curl -s -H "Authorization: token $GH_TOKEN" "https://raw.githubusercontent.com/$OLD_REPO/main/meta.json")
+          if echo "$OLD_META" | grep -q "pkg_no"; then
+            if [ "$FIRST" = true ]; then FIRST=false; else echo ',' >> /tmp/projects_array.json; fi
+            DOMAIN=$(echo "$OLD_META" | jq -r '.domain')
+            PKG_NO=$(echo "$OLD_META" | jq -r '.pkg_no')
+            CODE=$(echo "$OLD_META" | jq -r '.code // "-"')
+            DISPLAY=$(echo "$OLD_META" | jq -r '.display // "-"')
+            echo "    {\"repo\": \"$OLD_REPO\", \"domain\": \"$DOMAIN\", \"code\": \"$CODE\", \"display\": \"$DISPLAY\", \"pkg_no\": \"$PKG_NO\"}" >> /tmp/projects_array.json
+          fi
+
+          echo '' >> /tmp/projects_array.json
+          echo ']' >> /tmp/projects_array.json
+
+          echo '{' > config/repos.json
+          echo '  "kernel": "tlee20860-dotcom/AI-kernel",' >> config/repos.json
+          echo '  "general": "tlee20860-dotcom/AI-General",' >> config/repos.json
+          echo '  "packages": "tlee20860-dotcom/AI-packages",' >> config/repos.json
+          echo -n '  "projects": ' >> config/repos.json
+          jq 'sort_by(.pkg_no)' /tmp/projects_array.json >> config/repos.json
+          echo '}' >> config/repos.json
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add config/repos.json
+          git diff --cached --quiet || (git commit -m "chore: auto-sync repos.json [skip ci]" && git push)
+
+      - name: Read Repos Config
+        id: config
+        run: |
+          cat config/repos.json
+          KERNEL=$(jq -r '.kernel' config/repos.json)
+          GENERAL=$(jq -r '.general' config/repos.json)
+          PACKAGES=$(jq -r '.packages' config/repos.json)
+          echo "KERNEL_REPO=$KERNEL" >> $GITHUB_ENV
+          echo "GENERAL_REPO=$GENERAL" >> $GITHUB_ENV
+          echo "PACKAGES_REPO=$PACKAGES" >> $GITHUB_ENV
+          jq -c '.projects' config/repos.json > /tmp/projects.json
+
+      - name: Checkout AI-kernel (git clone main)
+        run: |
+          git clone --depth 1 -b main "https://x-access-token:${{ secrets.CROSS_REPO_PAT }}@github.com/${{ env.KERNEL_REPO }}.git" AI-kernel || \
+          git clone --depth 1 -b master "https://x-access-token:${{ secrets.CROSS_REPO_PAT }}@github.com/${{ env.KERNEL_REPO }}.git" AI-kernel
+
+      - name: Checkout AI-General (git clone main)
+        run: |
+          git clone --depth 1 -b main "https://x-access-token:${{ secrets.CROSS_REPO_PAT }}@github.com/${{ env.GENERAL_REPO }}.git" AI-General || \
+          git clone --depth 1 -b master "https://x-access-token:${{ secrets.CROSS_REPO_PAT }}@github.com/${{ env.GENERAL_REPO }}.git" AI-General
+
+      - name: "Step 0.5: 提取體系版本號 (Extract System Version)"
+        run: |
+          if [ -f "AI-General/docs/records/SYSTEM-HANDOFF.md" ]; then
+            SYS_VER=$(grep -E "^version:" AI-General/docs/records/SYSTEM-HANDOFF.md | head -1 | awk '{print $2}')
+          fi
+          if [ -z "$SYS_VER" ]; then SYS_VER="v0.0.0"; fi
+          echo "SYS_VER=$SYS_VER" >> $GITHUB_ENV
+
+      - name: Checkout AI-packages
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PACKAGES_REPO }}
+          token: ${{ secrets.CROSS_REPO_PAT }}
+          path: build-repo
+
+      - name: Checkout project repos
+        run: |
+          jq -c '.[]' /tmp/projects.json | while read -r row; do
+            REPO=$(echo "$row" | jq -r '.repo')
+            SAFE_NAME=$(echo "$REPO" | awk -F/ '{print $2}')
+            git clone --depth 1 -b main "https://x-access-token:${{ secrets.CROSS_REPO_PAT }}@github.com/$REPO.git" "external/$SAFE_NAME" 2>/dev/null || \
+            git clone --depth 1 -b master "https://x-access-token:${{ secrets.CROSS_REPO_PAT }}@github.com/$REPO.git" "external/$SAFE_NAME" 2>/dev/null || echo "clone fail: $REPO"
+          done
+
+      - name: "Step 1: 清理舊共享包 (清道夫)"
+        run: |
+          find build-repo -maxdepth 1 -name "*.md" -type f -delete
+          echo "舊共享包已清空。"
+
+      - name: "Step 1.5: 生成體系狀態 (20-SP-Sys.md)"
+        run: |
+          OUTPUT="build-repo/20-SP-Sys.md"
+          
+          SYS_W=""
+          if [ -f "AI-General/docs/records/SYSTEM-HANDOFF.md" ]; then
+            SYS_W=$(grep -E "^W: " "AI-General/docs/records/SYSTEM-HANDOFF.md" | head -1 | awk '{print $2}')
+          fi
+
+          echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT"
+          echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT"
+          if [ -n "$SYS_W" ]; then
+            echo "> ⚠️ 給 AI 的強制指示：上次體系對話編號為 ${SYS_W}，本次請依 A-00 §2.9 推算並套用。" >> "$OUTPUT"
+          else
+            echo "> ⚠️ 給 AI 的強制指示：無上次體系編號，本次請預設使用 ai-system-001。" >> "$OUTPUT"
+          fi
+          echo "" >> "$OUTPUT"
+          echo "# AI 對話系統 - 體系狀態包" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          echo "---" >> "$OUTPUT"
+          echo "⚠️ **【給 AI 的強制前置檢查】**" >> "$OUTPUT"
+          echo "請立刻確認：你是否已經讀取 \`00-IP.md\`、\`01-AP.md\`、\`02-RP.md\`、\`03-UP.md\`（體系四檔）？" >> "$OUTPUT"
+          echo "1. 如果「否」或「不確定」，請立刻停止閱讀本檔，先去讀取缺漏的檔案，載入身份、流程、規則與偏好。" >> "$OUTPUT"
+          echo "2. 如果「是」，請依據 \`00-IP.md\` 與 \`01-AP.md\` 輸出載入確認。" >> "$OUTPUT"
+          echo "---" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+
+          # 打包體系紀錄
+          for f in AI-General/docs/records/SYSTEM-HANDOFF.md AI-General/docs/records/PROGRESS.md AI-General/docs/records/SYSTEM-CONCLUSION.md AI-General/docs/records/SYSTEM-REJECTED.md AI-General/docs/records/SYSTEM-DEBT.md; do
+            if [ -f "$f" ]; then bash .github/workflows/append_file.sh "$f" "$OUTPUT" || true; fi
+          done
+
+      - name: "Step 1.8: 生成通用決策包 (04-GC.md)"
+        run: |
+          OUTPUT="build-repo/04-GC.md"
+          SOURCE="AI-General/docs/records/GENERAL-CONCLUSION.md"
+          
+          echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT"
+          echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          echo "# 通用對話決策總集 (GENERAL CONCLUSION)" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          
+          if [ -f "$SOURCE" ]; then
+            bash .github/workflows/append_file.sh "$SOURCE" "$OUTPUT" || true
+          else
+            echo "⚠️ 找不到 $SOURCE，生成空包。" >> "$OUTPUT"
+            echo "<!-- 無通用決策紀錄 -->" >> "$OUTPUT"
+          fi
+
+      - name: "Step 1.9: 生成 I 包 (00-IP.md)"
+        run: |
+          OUTPUT="build-repo/00-IP.md"
+          echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT"
+          echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          echo "# I 包：身份與信仰" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          if [ -f "AI-kernel/docs/a-guide/I-00-identity.md" ]; then bash .github/workflows/append_file.sh "AI-kernel/docs/a-guide/I-00-identity.md" "$OUTPUT" || true; fi
+
+      - name: "Step 2: 生成 A 包 (01-AP.md)"
+        run: |
+          OUTPUT="build-repo/01-AP.md"
+          echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT"
+          echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          echo "# A 包：啟動引導與角色定義" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          if [ -f "AI-kernel/docs/a-guide/A-00-guide.md" ]; then bash .github/workflows/append_file.sh "AI-kernel/docs/a-guide/A-00-guide.md" "$OUTPUT" || true; fi
+
+      - name: "Step 3: 生成 R 包 (02-RP.md)"
+        run: |
+          OUTPUT="build-repo/02-RP.md"
+          echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT"
+          echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          echo "# R 包：規則總覽" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          for f in R-03-terms R-00-rules R-02-patterns R-04-learning R-05-dsl-map; do
+            FILE_PATH="AI-kernel/docs/r-rules/${f}.md"
+            if [ -f "$FILE_PATH" ]; then bash .github/workflows/append_file.sh "$FILE_PATH" "$OUTPUT" || true; fi
+          done
+
+      - name: "Step 4: 生成 U 包 (03-UP.md)"
+        run: |
+          OUTPUT="build-repo/03-UP.md"
+          echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT"
+          echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          echo "# U 包：使用者通用描述" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          if [ -f "AI-kernel/docs/u-profile/U-00-profile.md" ]; then bash .github/workflows/append_file.sh "AI-kernel/docs/u-profile/U-00-profile.md" "$OUTPUT" || true; fi
+
+      - name: "Step 5: 生成 W 包 (10-WP.md)（若存在）"
+        run: |
+          OUTPUT="build-repo/10-WP.md"
+          if [ -d "AI-kernel/docs/skills/W" ]; then
+            echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT"
+            echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT"
+            echo "" >> "$OUTPUT"
+            echo "# W 包：Web App 領域技能" >> "$OUTPUT"
+            echo "" >> "$OUTPUT"
+            for f in AI-kernel/docs/skills/W/W-*.md; do
+              if [ -f "$f" ]; then bash .github/workflows/append_file.sh "$f" "$OUTPUT" || true; fi
+            done
+          fi
+
+      - name: "Step 6.5: 生成審查包 (23-CHK.md)"
+        run: |
+          OUTPUT="build-repo/23-CHK.md"
+          SRC_DIR="AI-kernel/docs/review"
+          SRC_LIST="REVIEW-FORMAT.md ROLE-BOUNDARY.md CHK-INDEX.md CHK-E.md"
+
+          MISSING=""
+          for f in $SRC_LIST; do
+            if [ ! -f "$SRC_DIR/$f" ]; then MISSING="$MISSING $f"; fi
+          done
+
+          if [ -n "$MISSING" ]; then
+            echo "[FAIL] CHK.md 生成中止：缺源檔$MISSING"
+            rm -f "$OUTPUT"
+            exit 1
+          fi
+
+          echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT"
+          echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          echo "# CHK 審查包（合規審判者用）" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+
+          for f in $SRC_LIST; do
+            bash .github/workflows/append_file.sh "$SRC_DIR/$f" "$OUTPUT" || { rm -f "$OUTPUT"; exit 1; }
+          done
+
+      - name: "Step 7: 生成專案狀態 ({pkg_no}-SP.md)"
+        run: |
+          jq -c '.[]' /tmp/projects.json | while read -r row; do
+            REPO=$(echo "$row" | jq -r '.repo')
+            PKG_NO=$(echo "$row" | jq -r '.pkg_no')
+            DOMAIN=$(echo "$row" | jq -r '.domain')
+            CODE=$(echo "$row" | jq -r '.code')
+            DISPLAY=$(echo "$row" | jq -r '.display // "-"')
+            SAFE_NAME=$(echo "$REPO" | awk -F/ '{print $2}')
+            
+            OUTPUT="build-repo/${PKG_NO}-SP.md"
+            PROJ_DIR="AI-General/docs/p${PKG_NO}"
+
+            # 防呆：若源目錄不存在，則不產出空殼
+            if [ ! -d "$PROJ_DIR" ]; then
+              echo "⏭️ 找不到專案目錄 $PROJ_DIR，跳過 ${PKG_NO}-SP.md 生成。"
+              continue
+            fi
+
+            PROJ_W=""
+            if [ -f "$PROJ_DIR/WF-HANDOFF.md" ]; then
+              PROJ_W=$(grep -E "^W: " "$PROJ_DIR/WF-HANDOFF.md" | head -1 | awk '{print $2}')
+            fi
+
+            echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT"
+            echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT"
+            if [ -n "$PROJ_W" ]; then
+              echo "> ⚠️ 給 AI 的強制指示：上次專案對話編號為 ${PROJ_W}，本次請依 A-00 §2.9 推算並套用。" >> "$OUTPUT"
+            else
+              echo "> ⚠️ 給 AI 的強制指示：無上次專案編號，本次請預設使用 ${CODE}-001。" >> "$OUTPUT"
+            fi
+            echo "" >> "$OUTPUT"
+            echo "# 專案狀態包：${SAFE_NAME}" >> "$OUTPUT"
+            echo "" >> "$OUTPUT"
+
+            # 打包進度與技術檔 (過渡期相容 WF-*.md 與 *P-*.md)
+            for f in "$PROJ_DIR"/WF-*.md "$PROJ_DIR"/*P-*.md; do
+              if [ -f "$f" ]; then bash .github/workflows/append_file.sh "$f" "$OUTPUT" || true; fi
+            done
+          done
+
+      - name: "Step 8: 生成專案技術包與代碼包 ({pkg_no}-P.md, {pkg_no}-Code.md)"
+        run: |
+          jq -c '.[]' /tmp/projects.json | while read -r row; do
+            REPO=$(echo "$row" | jq -r '.repo')
+            PKG_NO=$(echo "$row" | jq -r '.pkg_no')
+            SAFE_NAME=$(echo "$REPO" | awk -F/ '{print $2}')
+            
+            OUTPUT_P="build-repo/${PKG_NO}-P.md"
+            OUTPUT_CODE="build-repo/${PKG_NO}-Code.md"
+
+            # 防呆：專案技術檔 (過渡期相容 WF-*.md 與 *P-*.md)
+            PROJ_DIR="AI-General/docs/p${PKG_NO}"
+            if [ -d "$PROJ_DIR" ]; then
+              echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT_P"
+              echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT_P"
+              echo "" >> "$OUTPUT_P"
+              echo "# 專案技術總集：${SAFE_NAME}" >> "$OUTPUT_P"
+              echo "" >> "$OUTPUT_P"
+              
+              # 打包 WF 檔與舊 P 檔至專案技術包
+              for f in "$PROJ_DIR"/WF-*.md "$PROJ_DIR"/*P-*.md; do
+                if [ -f "$f" ]; then bash .github/workflows/append_file.sh "$f" "$OUTPUT_P" || true; fi
+              done
+            else
+              echo "⏭️ 找不到專案目錄 $PROJ_DIR，跳過 ${PKG_NO}-P.md 生成。"
+            fi
+
+            # 防呆：專案代碼 (Code)
+            if [ -d "external/${SAFE_NAME}" ]; then
+              echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT_CODE"
+              echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT_CODE"
+              echo "" >> "$OUTPUT_CODE"
+              echo "# 專案全程式碼包：${SAFE_NAME}" >> "$OUTPUT_CODE"
+              echo "" >> "$OUTPUT_CODE"
+              (
+                cd "external/${SAFE_NAME}" || exit 0
+                # 移除 .github 的排除，並加入 .yml 與 .yaml，確保專案 AI 能讀取 CI/CD 腳本
+                find . -type f \( -name "*.js" -o -name "*.html" -o -name "*.css" -o -name "*.json" -o -name "*.yml" -o -name "*.yaml" -o -name "*.vue" \) \
+                  -not -path "./.git/*" \
+                  -not -path "./node_modules/*" \
+                  -not -path "./docs/*" | sort | while read -r f; do
+                  if [ -f "$f" ]; then bash "../../.github/workflows/append_file.sh" "$f" "../../$OUTPUT_CODE" || true; fi
+                done
+              ) || true
+            else
+              echo "⏭️ 找不到專案源碼 external/${SAFE_NAME}，跳過 ${PKG_NO}-Code.md 生成。"
+            fi
+          done
+
+      - name: "Step 9: 生成基礎設施總包 (21-INFRA.md)"
+        run: |
+          OUTPUT="build-repo/21-INFRA.md"
+          echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT"
+          echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT"
+          echo "> ⚠️ 給 AI 的指示：本包包含體系唯一腳本與各專案呼叫器。" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          echo "# 基礎設施總包 (INFRA)" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+
+          echo "## 🏢 體系層：AI-infra（唯一腳本）" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          
+          for py in apply_patch.py validate_delivery.py; do
+            if [ -f ".github/scripts/$py" ]; then 
+              echo "### 📄 檔案：$py" >> "$OUTPUT"
+              bash .github/workflows/append_file.sh ".github/scripts/$py" "$OUTPUT" || true
+              echo "" >> "$OUTPUT"
+            fi
+          done
+
+          for wf in setup-structure.yml migrate.yml append_file.sh backup.yml copy-backup.yml cleanup-legacy.yml; do
+            if [ -f ".github/workflows/$wf" ]; then 
+              echo "### 📄 檔案：$wf (infra)" >> "$OUTPUT"
+              bash .github/workflows/append_file.sh ".github/workflows/$wf" "$OUTPUT" || true
+              echo "" >> "$OUTPUT"
+            fi
+          done
+
+          if [ -f "config/repos.json" ]; then 
+            echo "### 📄 檔案：config/repos.json (infra)" >> "$OUTPUT"
+            bash .github/workflows/append_file.sh "config/repos.json" "$OUTPUT" || true
+            echo "" >> "$OUTPUT"
+          fi
+
+          # 打包體系驗證配置（validate_delivery.py 依賴）
+          for cfg in "AI-kernel/docs/r-rules/validate-config.json" "AI-kernel/docs/r-rules/forbidden_words.txt"; do
+            if [ -f "$cfg" ]; then
+              echo "### 📄 檔案：$cfg" >> "$OUTPUT"
+              bash .github/workflows/append_file.sh "$cfg" "$OUTPUT" || true
+              echo "" >> "$OUTPUT"
+            fi
+          done
+
+      - name: "Step 9.3: 生成歷史檔案包 (24-HISTORY.md)"
+        run: |
+          OUTPUT="build-repo/24-HISTORY.md"
+          SRC_FILES="AI-General/docs/records/SYSTEM-EVOLUTION.md AI-General/docs/records/SYSTEM-REJECTED.md AI-General/docs/records/SYSTEM-DEBT.md AI-General/docs/records/SYSTEM-ARCHIVE.md AI-kernel/docs/r-rules/R-04-learning.md"
+
+          MISSING=""
+          for f in $SRC_FILES; do
+            if [ ! -f "$f" ]; then MISSING="$MISSING $f"; fi
+          done
+
+          if [ -n "$MISSING" ]; then
+            echo "[FAIL] HISTORY.md 生成中止：缺源檔$MISSING"
+            rm -f "$OUTPUT"
+            exit 1
+          fi
+
+          echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT"
+          echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT"
+          echo "> ⚠️ 給 AI 的指示：本包為歷史台帳與進化史，供查閱與追溯；不含會變動的 STATE-INDEX。" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          echo "# 歷史檔案包 (HISTORY)" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+
+          for f in $SRC_FILES; do
+            bash .github/workflows/append_file.sh "$f" "$OUTPUT" || { rm -f "$OUTPUT"; exit 1; }
+          done
+
+          # 打包專案歷史 (WF-EVOLUTION.md)
+          jq -c '.[]' /tmp/projects.json | while read -r row; do
+            PKG_NO=$(echo "$row" | jq -r '.pkg_no')
+            PROJ_DIR="AI-General/docs/p${PKG_NO}"
+            EVO_FILE="${PROJ_DIR}/WF-EVOLUTION.md"
+            if [ -f "$EVO_FILE" ]; then
+              echo "## 📦 專案歷史：${PKG_NO}" >> "$OUTPUT"
+              bash .github/workflows/append_file.sh "$EVO_FILE" "$OUTPUT" || true
+              echo "" >> "$OUTPUT"
+            fi
+          done
+
+      - name: "Step 9.4: 生成全庫總索引 (25-INDEX.md)"
+        run: |
+          OUTPUT="build-repo/25-INDEX.md"
+          echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT"
+          echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          echo "# 全庫檔案總索引 (GLOBAL INDEX)" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          echo "本檔包含所有體系與專案的實體檔案清單，供 AI 掌握全局檔案分佈。" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+
+          # 1. 體系索引
+          echo "## 🏢 體系源檔 (AI-kernel / AI-General)" >> "$OUTPUT"
+          echo "| Repo | 檔案 | Version | Writer |" >> "$OUTPUT"
+          echo "|---|---|---|---|" >> "$OUTPUT"
+          TMP_TABLE="/tmp/state-index-sys.txt"
+          > "$TMP_TABLE"
+          for REPO_DIR in "AI-General/docs" "AI-kernel/docs"; do
+            if [ -d "$REPO_DIR" ]; then
+              find "$REPO_DIR" -type f -name "*.md" -not -path "*/.git/*" | while read -r f; do
+                V=$(tail -n 15 "$f" | grep -oE 'V: *[0-9]+' | head -1 | sed 's/V: *//' || true)
+                W=$(tail -n 15 "$f" | grep -oE 'W: *[^ ]+' | head -1 | sed 's/W: *//' || true)
+                REPO_NAME="AI-General"
+                CLEAN_F=${f#AI-General/}
+                if [[ "$f" == AI-kernel/* ]]; then REPO_NAME="AI-kernel"; CLEAN_F=${f#AI-kernel/}; fi
+                if [ -n "$V" ]; then echo "| $REPO_NAME | $CLEAN_F | $V | $W |" >> "$TMP_TABLE"; else echo "| $REPO_NAME | $CLEAN_F | - | - |" >> "$TMP_TABLE"; fi
+              done
+            fi
+          done || true
+          if [ -s "$TMP_TABLE" ]; then sort -t'|' -k1,1 -k2 "$TMP_TABLE" >> "$OUTPUT"; fi
+          echo "" >> "$OUTPUT"
+
+          # 2. 基建索引 (AI-infra)
+          echo "## ⚙️ 基礎設施源檔 (AI-infra)" >> "$OUTPUT"
+          echo "| 目錄/路徑 | 檔案名稱 |" >> "$OUTPUT"
+          echo "|---|---|" >> "$OUTPUT"
+          find . -type f \( -name "*.yml" -o -name "*.py" -o -name "*.sh" -o -name "*.html" -o -name "*.js" -o -name "*.json" \) \
+            -not -path "./.git/*" -not -path "./build-repo/*" -not -path "./AI-*/*" -not -path "./external/*" | sort | while read -r f; do
+            CLEAN_F=${f#./}
+            DIR_NAME=$(dirname "$CLEAN_F")
+            FILE_NAME=$(basename "$CLEAN_F")
+            echo "| $DIR_NAME | $FILE_NAME |" >> "$OUTPUT"
+          done
+          echo "" >> "$OUTPUT"
+
+          # 2.5 體系驗證配置 (AI-kernel)
+          echo "## 🔧 體系驗證配置 (AI-kernel)" >> "$OUTPUT"
+          echo "| 目錄/路徑 | 檔案名稱 |" >> "$OUTPUT"
+          echo "|---|---|" >> "$OUTPUT"
+          for cfg in "AI-kernel/docs/r-rules/validate-config.json" "AI-kernel/docs/r-rules/forbidden_words.txt"; do
+            if [ -f "$cfg" ]; then
+              DIR_NAME=$(dirname "$cfg")
+              FILE_NAME=$(basename "$cfg")
+              echo "| $DIR_NAME | $FILE_NAME |" >> "$OUTPUT"
+            fi
+          done
+          echo "" >> "$OUTPUT"
+
+          # 3. 專案源碼索引
+          echo "## 📦 專案源碼檔案樹 (external)" >> "$OUTPUT"
+          echo "| 專案倉庫 | 檔案路徑 |" >> "$OUTPUT"
+          echo "|---|---|" >> "$OUTPUT"
+          
+          if [ -d "external" ]; then
+            find external -type f -not -path "*/.git/*" -not -path "*/node_modules/*" | sort | while read -r f; do
+              CLEAN_F=${f#external/}
+              REPO_NAME=$(echo "$CLEAN_F" | awk -F/ '{print $1}')
+              FILE_PATH=$(echo "$CLEAN_F" | cut -d'/' -f2-)
+              echo "| $REPO_NAME | $FILE_PATH |" >> "$OUTPUT"
+            done
+          fi
+          echo "" >> "$OUTPUT"
+
+          # 4. 生成物自身索引 (build-repo)
+          echo "## 🎁 本輪生成物清單 (AI-Packages)" >> "$OUTPUT"
+          echo "| 生成物檔案 | 大小 (KB) |" >> "$OUTPUT"
+          echo "|---|---|" >> "$OUTPUT"
+          if [ -d "build-repo" ]; then
+            find build-repo -maxdepth 1 -name "*.md" -type f -not -name "25-INDEX.md" | sort | while read -r f; do
+              FNAME=$(basename "$f")
+              SIZE=$(du -k "$f" | cut -f1)
+              echo "| $FNAME | $SIZE |" >> "$OUTPUT"
+            done
+          fi
+
+      - name: "Step 9.5: 生成控制台共享包 (22-Console.md)"
+        run: |
+          OUTPUT="build-repo/22-Console.md"
+          echo "> 體系版本：${{ env.SYS_VER }}" > "$OUTPUT"
+          echo "> 生成時間：$(TZ=Asia/Hong_Kong date '+%Y-%m-%d %H:%M:%S') (HKT)" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          echo "# 92 包：AI 控制台原始碼" >> "$OUTPUT"
+          echo "" >> "$OUTPUT"
+          
+          for f in index.html manifest.json sw.js; do
+            if [ -f "$f" ]; then bash .github/workflows/append_file.sh "$f" "$OUTPUT" || true; fi
+          done
+
+      - name: "Step 9.8: 交付驗證報告（report 模式，不擋）"
+        run: |
+          if [ ! -f ".github/scripts/validate_delivery.py" ]; then
+            echo "[SKIP] validate_delivery.py 不存在"
+            exit 0
+          fi
+          CHANGED=$(find AI-kernel/docs AI-General/docs -type f -name "*.md" 2>/dev/null || true)
+          export CHANGED_FILES="$CHANGED"
+          export VALIDATE_MODE=report
+          python3 .github/scripts/validate_delivery.py || true
+
+      - name: "Step 10: 上傳共享包 (僅推送到 AI-Packages)"
+        run: |
+          cd build-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || (
+            git commit -m "chore: auto-build packages [skip ci]" && 
+            (git pull --rebase origin main || true) && 
+            git push
+          )
+
+# EOF
+# F: AI-infra/.github/workflows/setup-structure.yml
+# V: 1793951000
+# W: ai-system-009
+# EOF
